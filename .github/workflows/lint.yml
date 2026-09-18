@@ -1,0 +1,25 @@
+name: Lint
+
+# Runs on every change so the pin gate has a subject from the first workflow on:
+# a gate over no workflows would pass forever without checking anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  action-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The gate refuses every unpinned shape
+        run: ./scripts/check-action-pins.sh --self-test
+      - name: Every remote action is pinned by commit SHA
+        run: ./scripts/check-action-pins.sh
