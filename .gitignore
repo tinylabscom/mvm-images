@@ -1,0 +1,5 @@
+target/
+result
+result-*
+*.ext4
+*.tar.gz

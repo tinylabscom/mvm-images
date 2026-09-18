@@ -1,0 +1,13 @@
+# Third-party actions are pinned by commit SHA, which is why this runs: a pin
+# that nobody updates is a pin that rots. Grouped and weekly, because a release
+# train does not need daily churn.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
