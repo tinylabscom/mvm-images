@@ -57,7 +57,7 @@ if [ "$("$prefix/bin/zig" version 2>/dev/null || true)" != "$zig_version" ]; the
 fi
 "$prefix/bin/zig" version
 
-if [ "$(cargo zigbuild --version 2>/dev/null | awk '{print $2}' || true)" != "$zigbuild_version" ]; then
+if [ "$(cargo-zigbuild --version 2>/dev/null | awk '{print $2}' || true)" != "$zigbuild_version" ]; then
   for attempt in 1 2 3; do
     if CARGO_NET_RETRY=10 cargo install cargo-zigbuild --version "$zigbuild_version" --locked; then
       break

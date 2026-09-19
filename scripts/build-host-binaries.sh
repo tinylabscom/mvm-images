@@ -74,7 +74,7 @@ if [ "$zig_have" != "$zig_pin" ]; then
   echo "zig $zig_pin required (mvm $rev pins it), found '${zig_have:-none}'" >&2
   exit 1
 fi
-zigbuild_have=$(cargo zigbuild --version 2>/dev/null | awk '{print $2}' || true)
+zigbuild_have=$(cargo-zigbuild --version 2>/dev/null | awk '{print $2}' || true)
 if [ "$zigbuild_have" != "$zigbuild_pin" ]; then
   echo "cargo-zigbuild $zigbuild_pin required (mvm $rev pins it), found '${zigbuild_have:-none}'" >&2
   echo "install with: cargo install cargo-zigbuild --version $zigbuild_pin --locked" >&2
