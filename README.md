@@ -139,6 +139,15 @@ CI builds every image on both architectures on pull requests that touch the
 image sources (`.github/workflows/build.yml`) and keeps the results as workflow
 artifacts. It never releases or signs.
 
+`.github/workflows/reproduce.yml` (`scripts/compare-same-commit.sh`) builds the
+builder VM and the default microVM a second way on the same runner: from
+`mvm`'s own in-tree image flakes at the pinned commit. It fails if the
+derivations or output files differ, and reports whether a `--rebuild` of the
+final derivation is bit-identical. Today it is not for the prod default image,
+whose verity superblock carries a random UUID
+([tinylabscom/mvm#3499](https://github.com/tinylabscom/mvm/issues/3499)), so
+that check reports without failing until the fix reaches the pin.
+
 ### Advancing the mvm pin
 
 1. Change the commit in the `mvm` input URL in `flake.nix` and run
