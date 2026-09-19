@@ -9,24 +9,19 @@
   # overlayAware:true, rootlessEntrypoint:true` sidecar; `dev` emits
   # {vmlinux, rootfs.ext4, mvm-meta.json} with `sealed:false, accessible:true`.
   # The x86_64-linux build + the actual VM boot run in CI / on a runtime host.
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    microvm = {
-      url = "github:microvm-nix/microvm.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
+  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
+  # microvm.nix and the exact `mvm` commit once for every image and calls
+  # `outputs` below with them. This file is not a flake on its own.
 
   outputs =
-    { self, nixpkgs, microvm, ... }:
+    { self, nixpkgs, microvm, mvm-src, ... }:
     let
       systems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # Same impure workspace-path override the sibling image flakes use.
-      workspaceRoot =
-        let envPath = builtins.getEnv "MVM_WORKSPACE_PATH";
-        in if envPath != "" then /. + envPath else ../../..;
+      # The `mvm` source tree at the commit the root flake pins. Everything this
+      # image reads from `mvm` resolves against it; there is no local override.
+      workspaceRoot = mvm-src.outPath;
 
       # Filtered workspace (mirrors builder-vm/runtime-overlay) for mkGuest.
       workspace =
@@ -45,17 +40,14 @@
 
       libFor = system: mvm.lib.${system};
 
-      # Workload kernel — the single shared definition in
-      # `nix/images/kernel/`, identical to the one builder-vm builds. Both
-      # import through the raw `workspaceRoot` (not the filtered `workspace`)
-      # so the kernel resolves under the `path:` URL fetch; importing through
-      # `workspace` forces realisation, which `nix flake check --no-build`
-      # refuses. Consuming the shared `workload.nix` keeps the workload
-      # symbol set in ONE place — no second enable list to drift.
+      # Workload kernel — the single shared definition in this repository's
+      # `kernel/`, identical to the one builder-vm builds. Consuming the shared
+      # `workload.nix` keeps the workload symbol set in ONE place — no second
+      # enable list to drift.
       kernelBaseFor = pkgs:
-        import (workspaceRoot + "/nix/images/kernel/base.nix") { inherit pkgs; };
+        import ../../kernel/base.nix { inherit pkgs; };
       mkWorkloadKernel = pkgs:
-        import (workspaceRoot + "/nix/images/kernel/workload.nix")
+        import ../../kernel/workload.nix
           { inherit pkgs; base = kernelBaseFor pkgs; };
 
       # Verity determinism — copied verbatim from runtime-overlay
@@ -92,10 +84,10 @@
       # moved past it.
       bootImageTag = builtins.getEnv "MVM_BOOT_IMAGE_TAG";
 
-      # The commit whose mk-guest.nix produced this rootfs. Resolves for a git
-      # flake ref; a `path:` flake has no revision to resolve and leaves this
-      # empty rather than inventing one. A Nix build has no ambient git.
-      generatorRev = self.rev or self.dirtyRev or "";
+      # The commit whose mk-guest.nix produced this rootfs. mk-guest.nix is
+      # `mvm`'s, so this is the pinned `mvm` commit — never this repository's
+      # own revision, which would tie the rootfs bytes to unrelated commits here.
+      generatorRev = mvm-src.rev;
 
       # Serialize mkGuest's `passthru.mvm` into the GuestSidecar wire shape
       # (crates/mvm-build/src/builder_vm.rs, #[serde(rename_all="camelCase")]).

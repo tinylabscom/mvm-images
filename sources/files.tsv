@@ -1,0 +1,25 @@
+# Every file copied from mvm, as <path in mvm> TAB <path here>.
+# scripts/check-source-drift.sh compares each against mvm at the pinned commit.
+# A file with a rewrite has sources/rewrites/<path here>.patch; the patch is the
+# whole of the intended difference, and SOURCES.md says why.
+nix/images/builder-vm/flake.nix	images/builder-vm/image.nix
+nix/images/default-tenant/flake.nix	images/default-tenant/image.nix
+nix/images/runtime-overlay/flake.nix	images/runtime-overlay/image.nix
+nix/images/initramfs/flake.nix	images/initramfs/image.nix
+nix/images/kernel/README.md	kernel/README.md
+nix/images/kernel/base.nix	kernel/base.nix
+nix/images/kernel/builder.nix	kernel/builder.nix
+nix/images/kernel/workload.nix	kernel/workload.nix
+nix/images/kernel/flake.nix	kernel/flake.nix
+nix/images/kernel/flake.lock	kernel/flake.lock
+nix/packages/qemu-wasm.nix	qemu-wasm/qemu-wasm.nix
+nix/packages/qemu-wasm-smoke-image.nix	qemu-wasm/qemu-wasm-smoke-image.nix
+nix/packages/qemu-wasm-smoke-pack.nix	qemu-wasm/qemu-wasm-smoke-pack.nix
+nix/packages/emscripten-cross.meson	qemu-wasm/emscripten-cross.meson
+nix/packaging/release/assert-sidecar-coherent.sh	packaging/assert-sidecar-coherent.sh
+scripts/build-kernel-artifacts.sh	scripts/build-kernel-artifacts.sh
+scripts/build-qemu-wasm-smoke-pack.sh	scripts/build-qemu-wasm-smoke-pack.sh
+scripts/run-qemu-wasm-demo-chromium.py	scripts/run-qemu-wasm-demo-chromium.py
+scripts/run-qemu-wasm-smoke-chromium.py	scripts/run-qemu-wasm-smoke-chromium.py
+scripts/run-qemu-wasm-smoke-suite.py	scripts/run-qemu-wasm-smoke-suite.py
+scripts/serve-qemu-wasm-smoke-pack.py	scripts/serve-qemu-wasm-smoke-pack.py

@@ -19,7 +19,7 @@ let
   crossPkgs = pkgs.pkgsCross.gnu64;
 
   # Reuse mvm's slim kernel base, but cross-built for x86_64.
-  kernelBase = import ../images/kernel/base.nix { pkgs = crossPkgs; };
+  kernelBase = import ../kernel/base.nix { pkgs = crossPkgs; };
   kernelConfig = kernelBase.mkConfigfile {
     extraDisables = [ "IPV6" ];
     extraEnables = [

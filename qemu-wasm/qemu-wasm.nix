@@ -30,12 +30,13 @@
   perl,
   gettext,
   unzip,
+  mvm-src,
 }:
 
 let
   # Crate tarballs come off the CDN, not the crates.io API host, which 403s a
-  # plain curl User-Agent. See nix/lib/crates-io.nix.
-  fetchCrate = (import ../lib/crates-io.nix).fetchCrate fetchurl;
+  # plain curl User-Agent. See nix/lib/crates-io.nix in `mvm`.
+  fetchCrate = (import (mvm-src + "/nix/lib/crates-io.nix")).fetchCrate fetchurl;
 
   # ── Upstream pins ──────────────────────────────────────────────────
   qemuWasmRev = "5a65998d47d78723115d1478a8a40f8d6d497f37";

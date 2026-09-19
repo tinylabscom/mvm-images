@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The kernel config budget still lives in mvm's xtask gate. Read it from the
+# pinned mvm commit rather than keeping a second copy of the numbers here.
+# shellcheck source=scripts/mvm-source.sh
+. "$(dirname "${BASH_SOURCE[0]}")/mvm-source.sh"
+
 arch="${1:?usage: build-kernel-artifacts.sh <aarch64|x86_64>}"
 case "$arch" in
   aarch64|x86_64) ;;
@@ -11,7 +16,7 @@ system="${arch}-linux"
 mkdir -p staging
 for variant in builder workload; do
   store=$(nix build \
-    "./nix/images/builder-vm#packages.${system}.${variant}-kernel" \
+    ".#legacyPackages.${system}.builder-vm.${variant}-kernel" \
     --impure --no-link --print-out-paths | head -1)
   if [[ -f "$store/Image" ]]; then
     src="$store/Image"
@@ -26,7 +31,7 @@ for variant in builder workload; do
 done
 
 config=$(nix build \
-  "./nix/images/builder-vm#packages.${system}.workload-kernel-configfile" \
+  ".#legacyPackages.${system}.builder-vm.workload-kernel-configfile" \
   --impure --no-link --print-out-paths | head -1)
 kernel_version=$(basename "$store" | sed -E 's/^linux-//')
 config_hash=$(sha256sum "$config" | cut -d' ' -f1)
@@ -38,7 +43,7 @@ cp "$config" "staging/workload-config-${arch}"
 symbol_count=$(grep -c '=y$' "$config")
 budget_name="BUDGET_${arch^^}"
 budget=$(grep -oP "${budget_name}: usize = \K[0-9]+" \
-  xtask/src/check_kernel_config_budget.rs)
+  "$(mvm_source_dir)/xtask/src/check_kernel_config_budget.rs")
 echo "workload kernel ${arch}: ${symbol_count} =y symbols (budget ${budget})"
 if [[ "$symbol_count" -gt "$budget" ]]; then
   echo "workload kernel ${arch} has ${symbol_count} built-in symbols, over budget ${budget}" >&2

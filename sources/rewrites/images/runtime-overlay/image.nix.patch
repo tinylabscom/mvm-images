@@ -1,0 +1,37 @@
+--- a/nix/images/runtime-overlay/flake.nix
++++ b/images/runtime-overlay/image.nix
+@@ -79,12 +79,12 @@
+   # through the same `nixpkgs.cryptsetup` attribute. Tightening
+   # this to an explicit version override is still open.
+ 
+-  inputs = {
+-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+-  };
++  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
++  # microvm.nix and the exact `mvm` commit once for every image and calls
++  # `outputs` below with them. This file is not a flake on its own.
+ 
+   outputs =
+-    { self, nixpkgs, ... }:
++    { self, nixpkgs, mvm-src, ... }:
+     let
+       systems = [
+         "aarch64-linux"
+@@ -92,14 +92,9 @@
+       ];
+       forAllSystems = nixpkgs.lib.genAttrs systems;
+ 
+-      # Workspace staging — same `MVM_WORKSPACE_PATH` env override
+-      # the builder-vm flake uses, for the libkrun-builder-VM
+-      # sandbox case.
+-      workspaceRoot =
+-        let
+-          envPath = builtins.getEnv "MVM_WORKSPACE_PATH";
+-        in
+-        if envPath != "" then /. + envPath else ../../..;
++      # The `mvm` source tree at the commit the root flake pins. Everything this
++      # image reads from `mvm` resolves against it; there is no local override.
++      workspaceRoot = mvm-src.outPath;
+ 
+       # Filter list lives at nix/lib/workspace-filter.nix so the three
+       # flakes that ingest the host workspace (this one, builder/,
