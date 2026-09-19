@@ -6,6 +6,10 @@
 # entry in flake.lock. Nothing here keeps a second copy: every function reads
 # the lock, and every tree it hands back is checked against the lock's narHash,
 # so a script cannot build from bytes other than the ones the flake evaluates.
+#
+# The one alternative is a local mvm checkout the caller names explicitly,
+# validated by `mvm_local_checkout`. It is never found by looking next to this
+# repository.
 
 MVM_IMAGES_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
@@ -63,4 +67,44 @@ mvm_assert_tree_matches_lock() {
     echo "$dir hashes to $got, flake.lock pins mvm at $narhash" >&2
     return 1
   fi
+}
+
+# git, answering for the directory passed with -C and nothing else: the
+# variables that would redirect it to another repository are cleared, and
+# optional locks are off so a probe never contends with the contributor's own
+# git in the same checkout.
+mvm_git() {
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY \
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_COMMON_DIR -u GIT_NAMESPACE \
+    GIT_OPTIONAL_LOCKS=0 git "$@"
+}
+
+# A local mvm checkout, named explicitly by the caller and never looked for.
+# Prints its canonical root: absolute, symlinks resolved, and the root of its
+# own git work tree, so neither a subdirectory nor a link into one can stand
+# for a checkout. The files that make it an mvm checkout must be regular files
+# inside it, not links to somewhere else.
+mvm_local_checkout() {
+  local given=$1 root top f
+  if [ ! -d "$given" ]; then
+    echo "$given: not a directory" >&2
+    return 1
+  fi
+  root=$(cd "$given" && pwd -P)
+  if ! top=$(mvm_git -C "$root" rev-parse --show-toplevel 2>/dev/null); then
+    echo "$root: not a git checkout" >&2
+    return 1
+  fi
+  top=$(cd "$top" && pwd -P)
+  if [ "$top" != "$root" ]; then
+    echo "$root: not the root of its git checkout (the root is $top)" >&2
+    return 1
+  fi
+  for f in Cargo.toml Cargo.lock nix/flake.nix crates/mvm-build/Cargo.toml; do
+    if [ -L "$root/$f" ] || [ ! -f "$root/$f" ]; then
+      echo "$root: not an mvm checkout (no regular file $f)" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$root"
 }

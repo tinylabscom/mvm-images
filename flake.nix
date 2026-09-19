@@ -21,6 +21,17 @@
   # this flake's nixpkgs and microvm.nix. For the same commit the derivations
   # are identical.
   #
+  # Building against a local mvm checkout instead of the pin is the override
+  # Nix already has, named on the command line of the build that uses it:
+  #
+  #   nix build .#legacyPackages.<system>.<role>.<attr> \
+  #     --override-input mvm path:<canonical mvm checkout>
+  #
+  # Nothing here looks for a checkout, and nothing but that flag selects one.
+  # For the same tree the override yields the same derivations as the pin
+  # (`scripts/check-local-mvm-override.sh` holds that), so a difference in the
+  # images is a difference in the mvm source and nothing else.
+  #
   # nixpkgs and microvm.nix are pinned to the revisions `mvm`'s image flakes
   # lock at that commit. The initramfs has its own nixpkgs pin there, so it
   # has its own input here; converging the two changes the initramfs bytes and
@@ -48,18 +59,20 @@
       # that variable is set, and the builder and default images evaluate
       # impurely. Left unguarded, an ambient variable would build these images
       # from whatever checkout it names while every label still said the
-      # pinned commit. Refuse instead: local mvm sources are a separate,
-      # explicit workflow.
-      pinnedMvm =
+      # pinned commit. Refuse instead: a local mvm source is selected with
+      # `--override-input mvm`, which changes the input itself, so every
+      # label derived from it follows.
+      mvmSource =
         if builtins.getEnv "MVM_WORKSPACE_PATH" != "" then
           throw ''
-            MVM_WORKSPACE_PATH is set. mvm-images builds only from the mvm
-            commit pinned in flake.nix and flake.lock; unset it.
+            MVM_WORKSPACE_PATH is set. mvm-images builds from its `mvm` input:
+            the commit pinned in flake.nix and flake.lock, or a local checkout
+            named with `--override-input mvm path:<dir>`. Unset it.
           ''
         else
           mvm;
 
-      image = file: args: (import file).outputs ({ self = { }; mvm-src = pinnedMvm; } // args);
+      image = file: args: (import file).outputs ({ self = { }; mvm-src = mvmSource; } // args);
 
       builderVm = image ./images/builder-vm/image.nix { inherit nixpkgs microvm; };
       defaultTenant = image ./images/default-tenant/image.nix { inherit nixpkgs microvm; };
@@ -73,7 +86,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          qemu-wasm-engine = pkgs.callPackage ./qemu-wasm/qemu-wasm.nix { mvm-src = pinnedMvm; };
+          qemu-wasm-engine = pkgs.callPackage ./qemu-wasm/qemu-wasm.nix { mvm-src = mvmSource; };
           qemu-wasm-smoke-image = pkgs.callPackage ./qemu-wasm/qemu-wasm-smoke-image.nix {
             inherit qemu-wasm-engine;
           };

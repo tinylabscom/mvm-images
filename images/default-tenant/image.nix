@@ -85,9 +85,12 @@
       bootImageTag = builtins.getEnv "MVM_BOOT_IMAGE_TAG";
 
       # The commit whose mk-guest.nix produced this rootfs. mk-guest.nix is
-      # `mvm`'s, so this is the pinned `mvm` commit — never this repository's
+      # `mvm`'s, so this is the `mvm` input's commit — never this repository's
       # own revision, which would tie the rootfs bytes to unrelated commits here.
-      generatorRev = mvm-src.rev;
+      # A local mvm checkout passed with `--override-input mvm path:<dir>` has no
+      # revision to resolve and leaves this empty rather than inventing one,
+      # exactly as mvm's own flake does for a `path:` build.
+      generatorRev = mvm-src.rev or mvm-src.dirtyRev or "";
 
       # Serialize mkGuest's `passthru.mvm` into the GuestSidecar wire shape
       # (crates/mvm-build/src/builder_vm.rs, #[serde(rename_all="camelCase")]).
