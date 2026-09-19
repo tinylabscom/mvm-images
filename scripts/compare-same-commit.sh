@@ -12,7 +12,7 @@
 # For every attribute the role publishes this prints both derivation paths and
 # whether they are equal, builds both, records a sha256 of every file in each
 # output, and rebuilds this repository's output once more with `--rebuild` so a
-# non-deterministic final step is reported rather than hidden behind a
+# non-deterministic final step fails the comparison rather than hiding behind a
 # substituted path. It exits nonzero if any comparison differs.
 
 set -euo pipefail
@@ -84,13 +84,11 @@ for attr in "${attrs[@]}"; do
 
   # Same derivation means Nix built it once above. Build it again from its
   # inputs and compare, so "identical" is about the bytes and not the path.
-  # Reported, not enforced: the prod default image's final step writes a
-  # random dm-verity superblock UUID (tinylabscom/mvm#3499). Make this fail
-  # once that fix reaches the pin.
   if "${MVM_NIX[@]}" build --impure --no-link --rebuild -L "$here_ref"; then
     echo "rebuild of the final derivation: bit-identical"
   else
-    echo "rebuild of the final derivation: DIFFERS (non-deterministic final step; tinylabscom/mvm#3499)"
+    echo "rebuild of the final derivation: DIFFERS (non-deterministic final step)"
+    status=1
   fi
 
   # Stage the files a boot needs, under the names the release publishes, so
