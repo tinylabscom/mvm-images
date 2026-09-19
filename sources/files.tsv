@@ -6,6 +6,7 @@ nix/images/builder-vm/flake.nix	images/builder-vm/image.nix
 nix/images/default-tenant/flake.nix	images/default-tenant/image.nix
 nix/images/runtime-overlay/flake.nix	images/runtime-overlay/image.nix
 nix/images/initramfs/flake.nix	images/initramfs/image.nix
+nix/images/version.nix	images/version.nix
 nix/images/kernel/README.md	kernel/README.md
 nix/images/kernel/base.nix	kernel/base.nix
 nix/images/kernel/builder.nix	kernel/builder.nix

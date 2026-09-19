@@ -8,6 +8,9 @@ diverged from mvm can be told apart from one that was changed on purpose.
 ## The pin
 
 All copies were taken at mvm commit
+`3720eeccefc959d273a4ce912c75ac56f54315f0`, the `main` commit that makes the
+image filesystems reproducible (tinylabscom/mvm#3512) and gives the initramfs
+the workspace version (tinylabscom/mvm#3510). The copies were first taken at
 `6717e2451e155672fafc85a1a729094869af8dd8` (W4a of the image-repository
 extraction plan, the commit that exports the guest recipes from mvm's
 `nix/flake.nix`). The same commit is what the images build from: it is pinned
@@ -34,6 +37,7 @@ entry against mvm at the pinned commit, with only the patch under
 | `nix/images/default-tenant/flake.nix` | `images/default-tenant/image.nix` | yes |
 | `nix/images/runtime-overlay/flake.nix` | `images/runtime-overlay/image.nix` | yes |
 | `nix/images/initramfs/flake.nix` | `images/initramfs/image.nix` | yes |
+| `nix/images/version.nix` | `images/version.nix` | no |
 | `nix/images/kernel/{README.md,base.nix,builder.nix,workload.nix,flake.nix,flake.lock}` | `kernel/` | no |
 | `nix/packages/qemu-wasm.nix` | `qemu-wasm/qemu-wasm.nix` | yes |
 | `nix/packages/qemu-wasm-smoke-image.nix` | `qemu-wasm/qemu-wasm-smoke-image.nix` | yes |

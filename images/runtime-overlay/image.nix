@@ -117,15 +117,11 @@
         mvm-workspace = workspace;
       };
 
-      # mvmctl semver pinned to match
-      # `[workspace.package].version` in the root Cargo.toml. The
-      # `RuntimeOverlayResolver` rejects an overlay whose VERSION
-      # file disagrees with the running mvmctl. Bumping the
-      # workspace version requires bumping this string too — keep
-      # the two in lock-step or `mvmctl up` admission fails.
-      # `xtask check-runtime-overlay-version` (a CI gate)
-      # asserts this match so the pin can't silently go stale.
-      overlayVersion = "0.18.0-rc.2";
+      # mvmctl semver, shared with the universal initramfs. The
+      # `RuntimeOverlayResolver` rejects an overlay whose VERSION file
+      # disagrees with the running mvmctl; `../version.nix` says how the
+      # pin is kept equal to the workspace version.
+      overlayVersion = import ../version.nix;
 
       # mvm-agentd binaries — agent + seccomp shim + netinit + OCI entrypoint.
       # The universal initramfs agent is PID 1 and lives in the initramfs, not
@@ -176,6 +172,11 @@
       overlayVeritySalt = "0000000000000000000000000000000000000000000000000000000000000000";
       overlayVerityHashAlgorithm = "sha256";
       overlayVerityHashBlockSize = 4096;
+      # Mirrors `mvm_fs::oci_to_rootfs::verity::MVM_VERITY_PINNED_UUID`.
+      # Without it `veritysetup format` writes a random UUID into the hash
+      # device's superblock, so the sidecar bytes differ on every build even
+      # though the root hash does not.
+      overlayVerityUuid = "00000000-0000-0000-0000-000000000003";
 
       # Keep the Nix-built verity baseline on
       # the exact same cryptsetup release as the builder VM's OCI-pull
@@ -311,8 +312,7 @@
                 -t ext4 \
                 -L mvm-sdk-sidecar \
                 -U ${overlayUuid} \
-                -E hash_seed=${overlayHashSeed} \
-                -E no_copy_xattrs \
+                -E hash_seed=${overlayHashSeed},no_copy_xattrs \
                 -b ${toString overlayBlockSize} \
                 -d "$staging" \
                 $out/sdk.ext4
@@ -438,8 +438,7 @@
                 -t ext4 \
                 -L mvm-runtime-overlay \
                 -U ${overlayUuid} \
-                -E hash_seed=${overlayHashSeed} \
-                -E no_copy_xattrs \
+                -E hash_seed=${overlayHashSeed},no_copy_xattrs \
                 -b ${toString overlayBlockSize} \
                 -d "$staging" \
                 $out/overlay.ext4
@@ -456,6 +455,7 @@
                 --hash-block-size=${toString overlayVerityHashBlockSize} \
                 --salt=${overlayVeritySalt} \
                 --hash=${overlayVerityHashAlgorithm} \
+                --uuid=${overlayVerityUuid} \
                 $out/overlay.ext4 \
                 $out/overlay.verity
             )
