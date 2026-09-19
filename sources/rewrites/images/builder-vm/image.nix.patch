@@ -1,0 +1,142 @@
+--- a/nix/images/builder-vm/flake.nix
++++ b/images/builder-vm/image.nix
+@@ -7,21 +7,14 @@
+   # kernel + ext4 rootfs containing Nix + a curated build-tools subset +
+   # `mvm-host-vm-init` at `/sbin/mvm-host-vm-init`.
+   #
+-  # `packages.<system>.default` produces `$out/{vmlinux,rootfs.ext4,
+-  # cmdline.txt,manifest.json}`.
++  # The root flake exposes these packages as `legacyPackages.<system>.builder-vm`;
++  # its `default` produces `$out/{vmlinux,rootfs.ext4,cmdline.txt,manifest.json}`.
+   #
+-  # A source-checkout `mvmctl` locates this flake through
+-  # `find_builder_vm_flake`.
+-  #
+   # ── Architecture / workspace staging ──────────────────────────────
+   #
+-  # - Stage the workspace via `builtins.path` (filter out `target/`,
+-  #   `.git/`, etc.) so the flake works both on a host running
+-  #   `nix build` directly and inside the libkrun builder VM's
+-  #   `path:` URL fetch.
+-  # - `MVM_WORKSPACE_PATH` env var override for the sandbox case
+-  #   (avoids resolving `../../..` against the flake's own store copy,
+-  #   which does not contain the workspace).
++  # - Stage the pinned `mvm` source via `mvm`'s own workspace filter
++  #   (`nix/lib/workspace-filter.nix`), so the filtered store path is the
++  #   one an in-tree `mvm` build produces for the same commit.
+   # - Call the `mvm` flake's `outputs` directly (`nix/flake.nix`) for
+   #   mkGuest, the guest recipes and the host-binaries manifest — no
+   #   flake-input chain, so no path-input lock validation issue.
+@@ -51,34 +44,27 @@
+   #   `extraFiles`. The kernel cmdline (`cmdline.txt` output)
+   #   chains into it from the generic `/init` bootstrap.
+ 
+-  inputs = {
+-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+-    microvm = {
+-      url = "github:microvm-nix/microvm.nix";
+-      inputs.nixpkgs.follows = "nixpkgs";
+-    };
+-  };
++  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
++  # microvm.nix and the exact `mvm` commit once for every image and calls
++  # `outputs` below with them. This file is not a flake on its own.
+ 
+   outputs =
+-    { self, nixpkgs, microvm, ... }:
++    { self, nixpkgs, microvm, mvm-src, ... }:
+     let
+       systems = [ "aarch64-linux" "x86_64-linux" ];
+       forAllSystems = nixpkgs.lib.genAttrs systems;
+ 
+-      workspaceRoot =
+-        let
+-          envPath = builtins.getEnv "MVM_WORKSPACE_PATH";
+-        in
+-        if envPath != "" then /. + envPath else ../../..;
+-
+-      # Evaluate the workspace-owned runtime-overlay flake against this
+-      # flake's pinned nixpkgs. A remote flake input would make contributor
+-      # source changes unreachable from Stage 0 and could silently drift from
+-      # the exact checkout the builder is compiling.
++      # The `mvm` source tree at the commit the root flake pins. Everything this
++      # image reads from `mvm` resolves against it; there is no local override.
++      workspaceRoot = mvm-src.outPath;
++
++      # Evaluate the runtime-overlay image against this image's nixpkgs and the
++      # same pinned `mvm` source, so the sidecars it re-exports are the ones the
++      # runtime-overlay image builds.
+       runtimeOverlay =
+-        (import (workspaceRoot + "/nix/images/runtime-overlay/flake.nix")).outputs {
++        (import ../runtime-overlay/image.nix).outputs {
+           self = { };
+-          inherit nixpkgs;
++          inherit nixpkgs mvm-src;
+         };
+ 
+       # Host binaries are embedded in mvmctl and extracted by
+@@ -131,14 +117,10 @@
+       # `nix flake check --no-build` (the "Nix flake check (Linux eval)"
+       # lane) refuses — so the builder/workload kernel + their configfile
+       # outputs must not route base through it.
+-      # Import the shared kernel via `workspaceRoot` (the same root this
+-      # flake reads `nix/flake.nix` from), NOT a bare `../kernel` relative
+-      # path. Under the `path:` URL fetch the libkrun builder VM uses, a
+-      # relative `..` resolves against the flake's *store copy* and
+-      # escapes it; `workspaceRoot` points at the live workspace
+-      # (`MVM_WORKSPACE_PATH`), so the sibling dir resolves.
++      # The kernel lives in this repository (`kernel/`), not in `mvm`, so it
++      # is imported relative to this file.
+       kernelBaseFor = pkgs:
+-        import (workspaceRoot + "/nix/images/kernel/base.nix") { inherit pkgs; };
++        import ../../kernel/base.nix { inherit pkgs; };
+ 
+       # veritysetup sidecar bytes must not drift when nixpkgs revs. The
+       # OCI-pull path runs `veritysetup format`
+@@ -357,7 +339,7 @@
+           # `linuxManualConfig` over `make defconfig` carved down by the
+           # base disables. `CONFIG_MODULES=n` so the kernel has only what
+           # `mvm-host-vm-init` uses built-in — no driver modules tree.
+-          kernelPkg = import (workspaceRoot + "/nix/images/kernel/builder.nix") { inherit pkgs; base = kernelBaseFor pkgs; };
++          kernelPkg = import ../../kernel/builder.nix { inherit pkgs; base = kernelBaseFor pkgs; };
+           rootfs = mkBuilderVmRootfs { inherit system interactive; };
+           kernelFile =
+             if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "bzImage";
+@@ -488,7 +470,7 @@
+       # `disables` edits to confirm SoC platform clusters are gone.
+       mkKernelConfigfile = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in (import (workspaceRoot + "/nix/images/kernel/builder.nix") { inherit pkgs; base = kernelBaseFor pkgs; }).passthru.configfile;
++        in (import ../../kernel/builder.nix { inherit pkgs; base = kernelBaseFor pkgs; }).passthru.configfile;
+ 
+       # Standalone kernel artifacts — targets for `mvmctl kernel build`
+       # and the kernel-build GHA. The builder image's `default` output
+@@ -503,23 +485,23 @@
+       # when its home moves out of this builder-vm flake.
+       mkBuilderKernel = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in import (workspaceRoot + "/nix/images/kernel/builder.nix") { inherit pkgs; base = kernelBaseFor pkgs; };
++        in import ../../kernel/builder.nix { inherit pkgs; base = kernelBaseFor pkgs; };
+       mkWorkloadKernel = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in import (workspaceRoot + "/nix/images/kernel/workload.nix") { inherit pkgs; base = kernelBaseFor pkgs; };
++        in import ../../kernel/workload.nix { inherit pkgs; base = kernelBaseFor pkgs; };
+       mkWorkloadKernelSizeopt = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in import (workspaceRoot + "/nix/images/kernel/workload.nix") {
++        in import ../../kernel/workload.nix {
+           inherit pkgs;
+           base = kernelBaseFor pkgs;
+           optimizeForSize = true;
+         };
+       mkWorkloadKernelConfigfile = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in (import (workspaceRoot + "/nix/images/kernel/workload.nix") { inherit pkgs; base = kernelBaseFor pkgs; }).passthru.configfile;
++        in (import ../../kernel/workload.nix { inherit pkgs; base = kernelBaseFor pkgs; }).passthru.configfile;
+       mkWorkloadKernelSizeoptConfigfile = system:
+         let pkgs = import nixpkgs { inherit system; };
+-        in (import (workspaceRoot + "/nix/images/kernel/workload.nix") {
++        in (import ../../kernel/workload.nix {
+           inherit pkgs;
+           base = kernelBaseFor pkgs;
+           optimizeForSize = true;

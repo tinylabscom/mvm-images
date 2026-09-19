@@ -1,0 +1,410 @@
+name: Build
+
+# Builds every image artifact, on both guest architectures, from the mvm
+# commit flake.lock pins, and keeps the results as workflow artifacts. It
+# publishes nothing: no release, no signature, no write token. Each job mirrors
+# the job in mvm that produces the same artifact today — release-boot-image.yml
+# for the builder VM, runtime overlay, SDK sidecars, default microVM and
+# QEMU/WebAssembly pack, release.yml for the initramfs, kernel-build.yml for the
+# kernels — with the same attributes, runners and staged file names, so the
+# outputs can be compared asset for asset.
+#
+# Not mirrored here: signing and publication (no identity to mint in a build
+# lane), the attested runtime pack (a signing step), and the default microVM's
+# Firecracker boot gate, which belongs with the boot comparison that follows
+# this lane.
+
+on:
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - images/**
+      - kernel/**
+      - qemu-wasm/**
+      - packaging/**
+      - scripts/**
+      - sources/**
+      - .github/workflows/build.yml
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - images/**
+      - kernel/**
+      - qemu-wasm/**
+      - packaging/**
+      - scripts/**
+      - sources/**
+      - .github/workflows/build.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Cheap and first: a copy that has drifted from mvm is a different image, so
+  # there is no point building it until the drift is explained.
+  source-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Copies match mvm at the pinned commit
+        run: ./scripts/check-source-drift.sh
+
+  builder-vm:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Install the pinned zig and cargo-zigbuild
+        run: ./scripts/install-host-toolchain.sh
+      # The builder rootfs installs static musl host binaries built outside
+      # Nix; the image reads them from MVM_HOST_BIN_DIR under --impure.
+      - name: Cross-compile the host binaries (MVM_HOST_BIN_DIR contract)
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/build-host-binaries.sh "$ARCH" "$RUNNER_TEMP/mvm"
+      - name: Build builder VM image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.builder-vm.default" \
+            --impure --no-link --print-out-paths | head -1)
+          echo "STORE_PATH=${STORE_PATH}" >> "$GITHUB_ENV"
+          mkdir -p staging
+          cp "$STORE_PATH/vmlinux"         "staging/builder-vm-vmlinux-${ARCH}"
+          cp "$STORE_PATH/rootfs.ext4"     "staging/builder-vm-rootfs-${ARCH}.ext4"
+          cp -L "$STORE_PATH/cmdline.txt"   "staging/builder-vm-${ARCH}.cmdline.txt"
+          cp -L "$STORE_PATH/manifest.json" "staging/builder-vm-${ARCH}.manifest.json"
+      - name: Generate builder image SBOM and checksums
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix-store --query --requisites "$STORE_PATH" > "staging/builder-vm-${ARCH}.sbom.txt"
+          cd staging
+          sha256sum \
+            "builder-vm-vmlinux-${ARCH}" "builder-vm-rootfs-${ARCH}.ext4" \
+            "builder-vm-${ARCH}.cmdline.txt" "builder-vm-${ARCH}.manifest.json" \
+            "builder-vm-${ARCH}.sbom.txt" \
+            > "builder-vm-${ARCH}-checksums-sha256.txt"
+      - name: Upload builder VM image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: builder-vm-image-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/builder-vm-vmlinux-${{ matrix.arch }}
+            staging/builder-vm-rootfs-${{ matrix.arch }}.ext4
+            staging/builder-vm-${{ matrix.arch }}.cmdline.txt
+            staging/builder-vm-${{ matrix.arch }}.manifest.json
+            staging/builder-vm-${{ matrix.arch }}.sbom.txt
+            staging/builder-vm-${{ matrix.arch }}-checksums-sha256.txt
+
+  runtime-overlay:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build runtime overlay image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.runtime-overlay.default" \
+            --no-link --print-out-paths | head -1)
+          dir="staging/runtime-overlay-${ARCH}"
+          mkdir -p "$dir"
+          for f in overlay.ext4 overlay.verity overlay.roothash VERSION; do
+            cp -L "$STORE_PATH/$f" "$dir/$f"
+          done
+          for bin in mvm-guest-agent mvm-guest-netinit mvm-egress-client mvm-oci-entrypoint; do
+            cp -L "$STORE_PATH/guest-runtime/$bin" "$dir/$bin"
+          done
+          members=(overlay.ext4 overlay.verity overlay.roothash VERSION
+            mvm-guest-agent mvm-guest-netinit mvm-egress-client mvm-oci-entrypoint)
+          (cd "$dir" && sha256sum "${members[@]}" > checksums-sha256.txt)
+          tar -C "$dir" -czf "staging/runtime-overlay-${ARCH}.tar.gz" \
+            "${members[@]}" checksums-sha256.txt
+          (cd staging && sha256sum "runtime-overlay-${ARCH}.tar.gz" > "runtime-overlay-${ARCH}.tar.gz.sha256")
+      - name: Upload runtime overlay image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-overlay-image-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/runtime-overlay-${{ matrix.arch }}.tar.gz
+            staging/runtime-overlay-${{ matrix.arch }}.tar.gz.sha256
+
+  sdk-sidecar:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [aarch64, x86_64]
+        libc: [glibc, musl]
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+          - libc: glibc
+            package: sdk-sidecar-image
+          - libc: musl
+            package: sdk-sidecar-image-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build SDK sidecar image
+        env:
+          ARCH: ${{ matrix.arch }}
+          LIBC: ${{ matrix.libc }}
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          ARCHIVE="sdk-sidecar-${ARCH}-${LIBC}.tar.gz"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.runtime-overlay.${PACKAGE}" \
+            --no-link --print-out-paths | head -1)
+          dir="staging/sdk-sidecar-${ARCH}-${LIBC}"
+          mkdir -p "$dir"
+          for f in sdk.ext4 VERSION checksums-sha256.txt; do
+            cp -L "$STORE_PATH/$f" "$dir/$f"
+          done
+          tar -C "$dir" -czf "staging/${ARCHIVE}" sdk.ext4 VERSION checksums-sha256.txt
+          (cd staging && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
+      - name: Upload SDK sidecar image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-sidecar-image-${{ matrix.arch }}-${{ matrix.libc }}
+          if-no-files-found: error
+          path: |
+            staging/sdk-sidecar-${{ matrix.arch }}-${{ matrix.libc }}.tar.gz
+            staging/sdk-sidecar-${{ matrix.arch }}-${{ matrix.libc }}.tar.gz.sha256
+
+  default-microvm:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build default microVM image (prod variant)
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.default-tenant.default" \
+            --impure --no-link --print-out-paths | head -1)
+          echo "STORE_PATH=${STORE_PATH}" >> "$GITHUB_ENV"
+          mkdir -p staging
+          cp -L "$STORE_PATH/vmlinux"         "staging/default-microvm-vmlinux-${ARCH}"
+          cp -L "$STORE_PATH/rootfs.ext4"     "staging/default-microvm-rootfs-${ARCH}.ext4"
+          cp -L "$STORE_PATH/rootfs.verity"   "staging/default-microvm-rootfs-${ARCH}.verity"
+          cp -L "$STORE_PATH/rootfs.roothash" "staging/default-microvm-rootfs-${ARCH}.roothash"
+          cp -L "$STORE_PATH/mvm-meta.json"   "staging/default-microvm-meta-${ARCH}.json"
+      # The same static reads release-boot-image.yml makes before upload. The
+      # shebang and kernel-format assertions are mvm's and stay there; they run
+      # from the pinned mvm source rather than as copies.
+      - name: Assert the staged image is loadable
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          . scripts/mvm-source.sh
+          MVM_SRC=$(mvm_source_dir)
+          command -v debugfs >/dev/null 2>&1 \
+            || { sudo apt-get update && sudo apt-get install -y e2fsprogs; }
+          bash "$MVM_SRC/nix/packaging/release/assert-init-shebang.sh" \
+            "staging/default-microvm-rootfs-${ARCH}.ext4" "staged ${ARCH}"
+          bash "$MVM_SRC/nix/packaging/release/assert-kernel-format.sh" \
+            "staging/default-microvm-vmlinux-${ARCH}" "${ARCH}" "staged ${ARCH} kernel"
+          bash packaging/assert-sidecar-coherent.sh \
+            "staging/default-microvm-meta-${ARCH}.json" "staged ${ARCH} sidecar"
+      - name: Generate default microVM SBOM and checksums
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix-store --query --requisites "$STORE_PATH" > "staging/default-microvm-${ARCH}.sbom.txt"
+          cd staging
+          sha256sum \
+            "default-microvm-vmlinux-${ARCH}" \
+            "default-microvm-rootfs-${ARCH}.ext4" \
+            "default-microvm-rootfs-${ARCH}.verity" \
+            "default-microvm-rootfs-${ARCH}.roothash" \
+            "default-microvm-meta-${ARCH}.json" \
+            > "default-microvm-${ARCH}-checksums-sha256.txt"
+      - name: Upload default microVM image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: default-microvm-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/default-microvm-vmlinux-${{ matrix.arch }}
+            staging/default-microvm-rootfs-${{ matrix.arch }}.ext4
+            staging/default-microvm-rootfs-${{ matrix.arch }}.verity
+            staging/default-microvm-rootfs-${{ matrix.arch }}.roothash
+            staging/default-microvm-meta-${{ matrix.arch }}.json
+            staging/default-microvm-${{ matrix.arch }}.sbom.txt
+            staging/default-microvm-${{ matrix.arch }}-checksums-sha256.txt
+
+  initramfs:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build the universal initramfs
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.initramfs.default" \
+            --no-link --print-out-paths | head -1)
+          dir="staging/initramfs-${ARCH}"
+          mkdir -p "$dir"
+          members=(initramfs.cpio.gz initramfs.hash initramfs.size VERSION)
+          for f in "${members[@]}"; do
+            cp -L "$STORE_PATH/$f" "$dir/$f"
+          done
+          (cd "$dir" && sha256sum "${members[@]}" > checksums-sha256.txt)
+          tar -C "$dir" -czf "staging/initramfs-${ARCH}.tar.gz" "${members[@]}" checksums-sha256.txt
+          (cd staging && sha256sum "initramfs-${ARCH}.tar.gz" > "initramfs-${ARCH}.tar.gz.sha256")
+      - name: Upload initramfs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: initramfs-image-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/initramfs-${{ matrix.arch }}.tar.gz
+            staging/initramfs-${{ matrix.arch }}.tar.gz.sha256
+
+  kernels:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build builder + workload kernels
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/build-kernel-artifacts.sh "$ARCH"
+      # `always()`: a budget failure is exactly the run whose resolved config
+      # explains which symbol was added.
+      - name: Upload kernels
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernels-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: |
+            staging/vmlinux-${{ matrix.arch }}-builder
+            staging/vmlinux-${{ matrix.arch }}-workload
+            staging/kernel-${{ matrix.arch }}-checksums-sha256.txt
+            staging/kernel-${{ matrix.arch }}.json
+            staging/kernel-metrics-${{ matrix.arch }}.json
+            staging/workload-config-${{ matrix.arch }}
+
+  # x86_64 only, as in mvm: the pack is a browser runtime for an x86_64 guest.
+  qemu-wasm-site-pack:
+    needs: source-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build QEMU-WASM browser pack
+        run: |
+          set -euo pipefail
+          STORE_PATH=$(nix build ".#legacyPackages.x86_64-linux.qemu-wasm.qemu-wasm-smoke-pack" \
+            --no-link --print-out-paths | head -1)
+          mkdir -p staging
+          tar -C "$STORE_PATH" -czf staging/qemu-wasm-smoke-pack.tar.gz .
+          (cd staging && sha256sum qemu-wasm-smoke-pack.tar.gz > qemu-wasm-smoke-pack.tar.gz.sha256)
+      - name: Upload QEMU-WASM browser pack
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qemu-wasm-site-pack
+          if-no-files-found: error
+          path: |
+            staging/qemu-wasm-smoke-pack.tar.gz
+            staging/qemu-wasm-smoke-pack.tar.gz.sha256

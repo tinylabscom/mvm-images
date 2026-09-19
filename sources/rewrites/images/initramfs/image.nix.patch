@@ -1,0 +1,33 @@
+--- a/nix/images/initramfs/flake.nix
++++ b/images/initramfs/image.nix
+@@ -32,23 +32,19 @@
+   # hash file is a convenience for the runtime resolver rather than the
+   # source of truth.
+ 
+-  inputs = {
+-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+-  };
++  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
++  # microvm.nix and the exact `mvm` commit once for every image and calls
++  # `outputs` below with them. This file is not a flake on its own.
+ 
+   outputs =
+-    { self, nixpkgs, ... }:
++    { self, nixpkgs, mvm-src, ... }:
+     let
+       systems = [ "aarch64-linux" "x86_64-linux" ];
+       forAllSystems = nixpkgs.lib.genAttrs systems;
+ 
+-      # Workspace staging — same `MVM_WORKSPACE_PATH` env override the
+-      # runtime-overlay and builder-vm flakes use.
+-      workspaceRoot =
+-        let
+-          envPath = builtins.getEnv "MVM_WORKSPACE_PATH";
+-        in
+-        if envPath != "" then /. + envPath else ../../..;
++      # The `mvm` source tree at the commit the root flake pins. Everything this
++      # image reads from `mvm` resolves against it; there is no local override.
++      workspaceRoot = mvm-src.outPath;
+ 
+       workspace =
+         (import (workspaceRoot + "/nix/lib/workspace-filter.nix") {
