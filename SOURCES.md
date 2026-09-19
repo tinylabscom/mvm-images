@@ -71,10 +71,13 @@ Every change is one of these, and nothing else.
    `qemu-wasm-smoke-image.nix` imports `../kernel/base.nix` instead of
    `../images/kernel/base.nix`.
 4. **`default-tenant`'s `generatorRev` is the mvm commit.** mvm used
-   `self.rev`, which in a release checkout is the mvm commit whose
-   `mk-guest.nix` built the rootfs. Here `self` would be this repository, which
-   is neither where `mk-guest.nix` lives nor stable across unrelated commits, so
-   it is `mvm-src.rev`. For the same mvm commit the sidecar says the same thing.
+   `self.rev or self.dirtyRev or ""`, which in a release checkout is the mvm
+   commit whose `mk-guest.nix` built the rootfs. Here `self` would be this
+   repository, which is neither where `mk-guest.nix` lives nor stable across
+   unrelated commits, so it is `mvm-src.rev or mvm-src.dirtyRev or ""`. For the
+   same mvm commit the sidecar says the same thing, and a local checkout passed
+   with `--override-input mvm path:<dir>`, which has no revision, leaves it
+   empty exactly as mvm does for a `path:` build.
 5. **`qemu-wasm.nix` takes the mvm source as an argument** and imports mvm's
    `nix/lib/crates-io.nix` from it, since that helper stays in mvm.
 6. **`build-kernel-artifacts.sh`** builds `.#legacyPackages.<system>.builder-vm.*`

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Install the zig and cargo-zigbuild that scripts/build-host-binaries.sh needs,
-# at the versions the pinned mvm commit declares in
+# at the versions the mvm source declares in
 # [workspace.metadata.mvm.toolchain].
 #
-# Usage: scripts/install-host-toolchain.sh [prefix]   (default: ~/.local/mvm-images)
+# Usage: scripts/install-host-toolchain.sh [--mvm-checkout <dir>] [prefix]
+#        (prefix default: ~/.local/mvm-images)
+#
+# --mvm-checkout reads the pins from a local mvm checkout instead, for
+# `build-host-binaries.sh --mvm-checkout` against the same checkout.
 #
 # zig lands in <prefix>/zig-<version>/ with a link in <prefix>/bin, which is
 # appended to $GITHUB_PATH when that is set. rustc is not installed here: a
@@ -15,8 +19,17 @@ set -euo pipefail
 # shellcheck source=scripts/mvm-source.sh
 . "$(dirname "${BASH_SOURCE[0]}")/mvm-source.sh"
 
+if [ "${1:-}" = "--mvm-checkout" ]; then
+  [ $# -ge 2 ] || { echo "--mvm-checkout needs a directory" >&2; exit 2; }
+  src=$(mvm_local_checkout "$2")
+  label="the local mvm checkout $src"
+  shift 2
+else
+  src=$(mvm_source_dir)
+  label="mvm $(mvm_rev)"
+fi
 prefix="${1:-$HOME/.local/mvm-images}"
-cargo_toml="$(mvm_source_dir)/Cargo.toml"
+cargo_toml="$src/Cargo.toml"
 
 pin() {
   awk -v key="$1" '
@@ -27,7 +40,7 @@ pin() {
 zig_version=$(pin zig)
 zigbuild_version=$(pin cargo-zigbuild)
 [ -n "$zig_version" ] && [ -n "$zigbuild_version" ] \
-  || { echo "no zig / cargo-zigbuild pin in mvm $(mvm_rev)" >&2; exit 1; }
+  || { echo "no zig / cargo-zigbuild pin in $label" >&2; exit 1; }
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) platform=x86_64-linux ;;

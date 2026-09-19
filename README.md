@@ -172,10 +172,57 @@ mvmco/
   mvm-images/
 ```
 
-Locally built images are content-addressed, carry both repositories' commits and
-dirty state, and are reported as a development trust tier. A release binary and
-production admission refuse them.
+Nothing looks for that sibling. A build names the mvm checkout it uses, by
+overriding the flake's `mvm` input with its canonical path:
 
-That workflow is planned, not built: it arrives with the extraction plan's W5,
-and will select a local `mvm` explicitly rather than by finding a sibling. Today
-the flake builds only from the pinned commit.
+```sh
+mvm=$(cd ../mvm && pwd -P)
+nix build .#legacyPackages.x86_64-linux.runtime-overlay.default \
+  --override-input mvm "path:$mvm"
+```
+
+Every role builds this way, and every guest binary then comes from that
+checkout, uncommitted changes included. For an unchanged tree the override
+gives exactly the pinned derivations; `scripts/check-local-mvm-override.sh`
+proves both halves and runs in CI. `MVM_WORKSPACE_PATH` stays refused: the
+override is the one way in. Two things to know about `path:`:
+
+- it copies the whole directory into the Nix store, ignored files included, so
+  keep a large `target/` out of the checkout (set `CARGO_TARGET_DIR`) before
+  overriding with it;
+- it has no commit, so the default microVM's sidecar records an empty
+  `generatorRev`, as `mvm`'s own `path:` builds do.
+
+The builder VM's host binaries come from the same checkout:
+
+```sh
+scripts/install-host-toolchain.sh --mvm-checkout "$mvm"
+scripts/build-host-binaries.sh --mvm-checkout "$mvm" x86_64   # prints MVM_HOST_BIN_DIR=...
+MVM_HOST_BIN_DIR=... nix build .#legacyPackages.x86_64-linux.builder-vm.default \
+  --impure --override-input mvm "path:$mvm"
+```
+
+`scripts/emit-local-manifest.py` then describes what was built, in the image-set
+manifest schema `mvm` parses for a released set:
+
+```sh
+out=$(nix build .#legacyPackages.x86_64-linux.runtime-overlay.default \
+  --override-input mvm "path:$mvm" --no-link --print-out-paths)
+scripts/emit-local-manifest.py --mvm-checkout "$mvm" --arch x86_64 \
+  --builder-cache-contract 1 --out /tmp/local-set \
+  --artifact runtime_overlay ext4 "$out/overlay.ext4" \
+  --artifact runtime_overlay verity_hash_tree "$out/overlay.verity" \
+  --artifact runtime_overlay verity_root_hash "$out/overlay.roothash" \
+  --capability runtime_overlay virtio_blk --capability runtime_overlay dm_verity
+```
+
+It copies each artifact into the new directory and writes `image-set.json`
+beside them, recording both checkouts' commits and working-tree state (a dirty
+tree by the fingerprint `mvm` computes), every artifact's digest and size, the
+guest architecture and each artifact's role. Its producer is
+`local_checkouts` and nothing else: no repository, workflow, tag, revocation
+channel, pack hash or SBOM, so it can never be read as a release. `mvm`
+parses it with the same parser as a released set, classifies it as the
+`local-dev` trust tier, and refuses it when either checkout has moved on since
+it was written. A release build of `mvmctl` refuses a local image checkout
+outright, and so does a production admission.
