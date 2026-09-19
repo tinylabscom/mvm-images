@@ -128,17 +128,47 @@ def _section(hasher, label: bytes, body: bytes) -> None:
     hasher.update(body)
 
 
+# The status listing and diff a fingerprint covers, exactly as mvm requests
+# them. Every option git configuration could change is spelled out, so two
+# hosts with different settings fingerprint one tree the same way.
+STATUS_ARGS = (
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--no-renames",
+    "--ignore-submodules=none",
+)
+DIFF_ARGS = (
+    "diff",
+    "HEAD",
+    "--binary",
+    "--full-index",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    "--no-renames",
+    "--no-relative",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "--unified=3",
+    "--inter-hunk-context=0",
+    "--diff-algorithm=myers",
+    "--indent-heuristic",
+    "--ignore-submodules=none",
+    "-O/dev/null",
+    "--",
+)
+
+
 def worktree_state(root: Path) -> dict:
     """Clean, or dirty with the fingerprint mvm computes for the same tree."""
-    status = git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    status = git(root, *STATUS_ARGS)
     if not status:
         return {"state": "clean"}
     hasher = hashlib.sha256()
     _section(hasher, b"status", status)
-    diff = git(
-        root, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-color"
-    )
-    _section(hasher, b"diff", diff)
+    _section(hasher, b"diff", git(root, *DIFF_ARGS))
     untracked = git(root, "ls-files", "--others", "--exclude-standard", "-z")
     for name in (n for n in untracked.split(b"\0") if n):
         path = os.path.join(os.fsencode(root), name)

@@ -40,10 +40,10 @@ GIT_ENV = {
 }
 
 # The fingerprint of the tree `dirty_fixture` leaves behind. mvm's
-# `crates/mvm-build/src/image_source/git.rs` pins the same value for the same
+# `crates/mvm-build/src/image_source/tests.rs` pins the same value for the same
 # fixture, which is what makes a manifest written here comparable with a
 # checkout mvm re-reads.
-DIRTY_FIXTURE_FINGERPRINT = "c4662da0f16d2399ae1e290892781bec2794358845ff0852a9e6a3b7dd205519"
+DIRTY_FIXTURE_FINGERPRINT = "952dbae933d34ca2625e9964a3e919b48271a821117b03daf9a606382f7490f1"
 
 
 def run_git(root: Path, *args: str) -> None:
