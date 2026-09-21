@@ -396,6 +396,9 @@ jobs:
             staging/kernel-${{ matrix.arch }}-checksums-sha256.txt
             staging/kernel-${{ matrix.arch }}.json
             staging/kernel-metrics-${{ matrix.arch }}.json
+            staging/vmlinux-${{ matrix.arch }}-workload-k8s
+            staging/workload-k8s-config-${{ matrix.arch }}
+            staging/kernel-k8s-metrics-${{ matrix.arch }}.json
             staging/workload-config-${{ matrix.arch }}
 
   # x86_64 only, as in mvm: the pack is a browser runtime for an x86_64 guest.

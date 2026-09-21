@@ -14,7 +14,7 @@ esac
 
 system="${arch}-linux"
 mkdir -p staging
-for variant in builder workload; do
+for variant in builder workload workload-k8s; do
   store=$(nix build \
     ".#legacyPackages.${system}.builder-vm.${variant}-kernel" \
     --impure --no-link --print-out-paths | head -1)
@@ -50,11 +50,23 @@ if [[ "$symbol_count" -gt "$budget" ]]; then
   exit 1
 fi
 
+# The in-guest orchestrator variant resolves its own configfile so the
+# olddefconfig guards run over the delta; no budget assertion — the ratchet
+# covers the sealed workload kernel only. Symbol count feeds the metrics.
+k8s_config=$(nix build \
+  ".#legacyPackages.${system}.builder-vm.workload-k8s-kernel-configfile" \
+  --impure --no-link --print-out-paths | head -1)
+cp "$k8s_config" "staging/workload-k8s-config-${arch}"
+k8s_symbol_count=$(grep -c '=y$' "$k8s_config")
+echo "workload-k8s kernel ${arch}: ${k8s_symbol_count} =y symbols (no budget)"
+
 raw_bytes=$(stat -c%s "staging/vmlinux-${arch}-workload")
 gzip_bytes=$(gzip -c "staging/vmlinux-${arch}-workload" | wc -c)
 printf '{"arch":"%s","y_symbol_count":%d,"vmlinux_bytes":%d,"vmlinux_gz_bytes":%d}\n' \
   "$arch" "$symbol_count" "$raw_bytes" "$gzip_bytes" \
   > "staging/kernel-metrics-${arch}.json"
+printf '{"arch":"%s","variant":"workload-k8s","y_symbol_count":%d}\n' \
+  "$arch" "$k8s_symbol_count" > "staging/kernel-k8s-metrics-${arch}.json"
 
 (
   cd staging
