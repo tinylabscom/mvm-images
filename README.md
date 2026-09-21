@@ -12,6 +12,64 @@ migration reaches its publication workstream, the canonical images are still
 published from `mvm`'s `boot-image/vN` releases, and nothing here publishes
 anything.
 
+## Architecture: images are produced here
+
+`mvm-images` is the canonical producer of every base image `mvm` needs:
+kernels, root filesystems, runtime overlays, initramfs images, builder images
+and bootstrap inputs. `mvm` consumes released image sets through its
+digest-pinned image lock; it does not own a second canonical image definition
+or publication path. During the extraction there are temporary source mirrors
+and same-commit reproduction checks, but the steady-state dependency is one
+way:
+
+```text
+mvm source revision ──► mvm-images builds and publishes an image set
+                                      │
+                                      ▼
+                          mvm verifies and consumes it
+```
+
+Application and template repositories describe workloads. They do not move
+workload-specific image variants into this repository. When several workloads
+need the same guest capability, this repository provides a generic base image
+and advertises that capability in the image-set manifest; consumers select it
+by contract rather than by a workload name.
+
+### Base workload images
+
+The image set has two distinct workload postures:
+
+- **`default-tenant`** is the smallest sealed workload image. Its entrypoint is
+  unprivileged, but its kernel deliberately omits facilities that a single
+  admitted process does not need, including namespace and cgroup hierarchies.
+- **`rootless-tenant`** is the generic base for a workload that runs its own
+  rootless container stack or in-guest supervisor. It still runs workload code
+  as the unprivileged workload identity and preserves the same verified-boot,
+  vsock, storage, egress and admission boundaries, while adding the generic
+  kernel/userspace capability floor for rootless process isolation (user,
+  mount, PID, IPC and UTS namespaces), cgroup v2 delegation and controllers,
+  container filesystems, PTYs and container storage on an attached writable
+  volume.
+
+**No guest NIC, ever.** Neither base image may create or expect a NIC, TAP,
+TUN, bridge, veth pair, macvlan, SLIRP, passt, vpnkit, CNI dataplane or other
+guest packet-networking path. Guest loopback exists only for local adapters.
+Proxy-aware TCP and UDP, controlled DNS, mediated ping, typed connectors and
+declared ingress all cross the single authenticated FlowMux session over vsock;
+the host endpoint applies signed policy and opens any external socket. There is
+no guest firewall, NAT or routing fallback because there is no guest NIC for
+one to govern. This is the permanent networking contract documented in
+[`mvm`'s networking guide](https://github.com/tinylabscom/mvm/blob/main/public/src/content/docs/guides/networking.md).
+
+`rootless-tenant` is not a Kubernetes image. It contains no Kubernetes package,
+service, configuration or naming. Kubernetes, build farms and other consumers
+compose their own software in their own repositories on top of the same
+generic rootless base. Keeping it separate from `default-tenant` avoids
+silently widening the kernel and attack surface of ordinary single-process
+workloads. A consumer that assumes CNI, pod bridges, veth pairs, NodePort or a
+guest-side NAT is incompatible with `mvm`; it must use loopback adapters and
+the admitted vsock path instead.
+
 ## What this repository will own
 
 | Role | Artifacts |
@@ -19,6 +77,7 @@ anything.
 | Builder VM | kernel and rootfs the Nix build jobs run inside |
 | Workload kernel | the kernel a workload microVM boots |
 | Workload rootfs | the verity-sealed default rootfs, its hash tree and root hash |
+| Rootless tenant | generic rootless-container-capable kernel and sealed rootfs |
 | Runtime overlay | the guest runtime binaries overlaid at launch |
 | SDK sidecars | the in-guest host-services library, one per C library |
 | Stage 0 seeds | the bootstrap kernel and Nix seed a cold host starts from |
@@ -35,6 +94,9 @@ Host CLI and runtime source, the guest agent, artifact acquisition and
 verification code, admission, and the code that boots a builder — Stage 0
 orchestration, the builder runner and the VMM drivers — all stay in `mvm`.
 Stage 0's *seed inputs* move here; the code that runs Stage 0 does not.
+Workload-specific packages, services and configuration stay with their
+application or template repository. In particular, this repository may provide
+a generic rootless base but must not grow a Kubernetes-named image or kernel.
 
 ## Release contract
 
@@ -100,13 +162,16 @@ QEMU/WebAssembly outputs are under `qemu-wasm`. The kernel needs nothing from
 
 The binaries inside the images — the guest agent, the runtime helpers, the SDK
 library, the builder's init — are compiled from `mvm` source against `mvm`'s
-`Cargo.lock`, and their Nix recipes stay in `mvm`. This repository takes `mvm`
-as a flake input pinned to one exact commit (`flake.nix`, recorded in
-`flake.lock`) and evaluates `mvm`'s `nix/flake.nix` against it exactly as
-`mvm`'s own image flakes do, so for the same commit every derivation is the
-same one `mvm` builds. Nothing tracks `mvm`'s `main`, and nothing looks for a
-checkout next to this one. [SOURCES.md](SOURCES.md) records which files were
-copied from `mvm` and every intended difference;
+`Cargo.lock`. Their program source stays in `mvm`; the canonical image
+composition, image-specific build policy and published outputs belong here.
+During extraction, this repository takes `mvm` as a flake input pinned to one
+exact commit (`flake.nix`, recorded in `flake.lock`) and still evaluates some
+of `mvm`'s Nix recipes so the moved images can be compared byte-for-byte. That
+is a migration mechanism, not a second ownership path: the end state removes
+canonical image construction from `mvm`, and `mvm` consumes the generated
+image set from this repository. Nothing tracks `mvm`'s `main`, and nothing
+looks for a checkout next to this one. [SOURCES.md](SOURCES.md) records which
+files were copied from `mvm` and every intended difference;
 `scripts/check-source-drift.sh` fails when a copy differs from `mvm` at the
 pinned commit by anything else.
 

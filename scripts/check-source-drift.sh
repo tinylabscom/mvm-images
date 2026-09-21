@@ -13,7 +13,8 @@
 # the result must equal the file here byte for byte. It also checks that the
 # nixpkgs and microvm.nix pins in flake.lock are the ones mvm's image flakes
 # lock, and reports files that appeared in mvm's nix/images/ without being
-# accounted for here.
+# accounted for here. `sources/ignored.tsv` explicitly accounts for upstream
+# workload-specific files that are intentionally not base-image roles.
 #
 # To record a new intentional rewrite: edit the file here, then regenerate its
 # patch with --write-patches and describe the change in SOURCES.md.
@@ -70,7 +71,9 @@ while IFS=$'\t' read -r theirs ours; do
     if cmp -s "$tmp/orig" "$ours"; then
       rm -f "$patchfile"
     else
-      diff -u --label "a/$theirs" --label "b/$ours" "$tmp/orig" "$ours" > "$patchfile" || true
+      # Zero context keeps the checked-in patch free of whitespace-only
+      # context lines while still describing the exact pinned-source rewrite.
+      diff -U0 --label "a/$theirs" --label "b/$ours" "$tmp/orig" "$ours" > "$patchfile" || true
     fi
     continue
   fi
@@ -91,6 +94,16 @@ while IFS=$'\t' read -r theirs ours; do
   fi
 done < sources/files.tsv
 
+ignored=()
+while IFS=$'\t' read -r theirs reason; do
+  case "$theirs" in ''|'#'*) continue ;; esac
+  [ -n "$reason" ] || { echo "sources/ignored.tsv: $theirs has no reason" >&2; exit 2; }
+  ignored+=("$theirs")
+  if ! upstream_cat "$theirs" > /dev/null; then
+    report "$theirs is ignored but no longer exists in $label"
+  fi
+done < sources/ignored.tsv
+
 if [ "$write_patches" = 1 ]; then
   echo "rewrote sources/rewrites/ from the working tree; describe any change in SOURCES.md"
   exit 0
@@ -106,6 +119,9 @@ while IFS= read -r f; do
   esac
   found=0
   for l in "${listed[@]}"; do [ "$l" = "$f" ] && found=1 && break; done
+  if [ "$found" = 0 ]; then
+    for l in "${ignored[@]}"; do [ "$l" = "$f" ] && found=1 && break; done
+  fi
   [ "$found" = 1 ] || report "$f exists in $label but is not in sources/files.tsv"
 done < <(upstream_ls nix/images)
 
@@ -136,4 +152,4 @@ if [ "$drift" != 0 ]; then
   echo "check-source-drift: the copies here have drifted from $label" >&2
   exit 1
 fi
-echo "check-source-drift: clean against $label (${#listed[@]} files, flake.lock pins match)"
+echo "check-source-drift: clean against $label (${#listed[@]} copied, ${#ignored[@]} intentionally ignored, flake.lock pins match)"

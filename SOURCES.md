@@ -8,9 +8,12 @@ diverged from mvm can be told apart from one that was changed on purpose.
 ## The pin
 
 All copies were taken at mvm commit
-`3720eeccefc959d273a4ce912c75ac56f54315f0`, the `main` commit that makes the
-image filesystems reproducible (tinylabscom/mvm#3512) and gives the initramfs
-the workspace version (tinylabscom/mvm#3510). The copies were first taken at
+`ca3895a4df1df9d51726ae6be0900012ee137a88`. The pin advances the guest
+program source through the display-plane and image-source-selector work while
+the rewrite ledger deliberately excludes the Kubernetes-specific kernel work
+in that upstream commit. The generic rootless posture belongs here and follows
+the permanent NIC-less FlowMux/vsock contract in `README.md`; it is not an
+import of `workload-k8s`. The copies were first taken at
 `6717e2451e155672fafc85a1a729094869af8dd8` (W4a of the image-repository
 extraction plan, the commit that exports the guest recipes from mvm's
 `nix/flake.nix`). The same commit is what the images build from: it is pinned
@@ -30,6 +33,8 @@ The machine-readable list is [`sources/files.tsv`](sources/files.tsv).
 [`scripts/check-source-drift.sh`](scripts/check-source-drift.sh) compares every
 entry against mvm at the pinned commit, with only the patch under
 [`sources/rewrites/`](sources/rewrites/) applied, and runs first in CI.
+[`sources/ignored.tsv`](sources/ignored.tsv) accounts for upstream files that
+are intentionally not base-image sources and requires a reason for each one.
 
 | mvm | here | changed |
 |---|---|---|
@@ -89,6 +94,13 @@ Every change is one of these, and nothing else.
    kernel config budget from `xtask/src/check_kernel_config_budget.rs` in the
    pinned mvm source rather than keeping a second copy of the numbers.
 7. Comments that described the old wiring were updated to describe the new one.
+8. **Workload-specific upstream image files are not base-image roles.** The
+   drift gate accounts for them through `sources/ignored.tsv` instead of
+   silently copying them. At this pin that excludes the `llm-agent` example
+   and the Kubernetes-specific `workload-k8s` kernel. The latter assumes
+   guest bridge/veth-style networking that violates this repository's
+   permanent NIC-less FlowMux/vsock contract. Generic rootless capabilities
+   are designed and published here under workload-neutral names.
 
 ## Deliberately not copied
 
@@ -102,6 +114,8 @@ Every change is one of these, and nothing else.
 - `nix/packaging/release/assert-init-shebang.sh` and `assert-kernel-format.sh`,
   which the plan does not move. The build workflow runs them from the pinned
   mvm source.
+- Files listed in `sources/ignored.tsv`. They are checked for explicit
+  accounting but are neither copied nor published as base-image roles.
 
 ## Known limitations of the copies
 

@@ -1,41 +1,32 @@
 --- a/scripts/build-kernel-artifacts.sh
 +++ b/scripts/build-kernel-artifacts.sh
-@@ -1,6 +1,11 @@
- #!/usr/bin/env bash
- set -euo pipefail
- 
+@@ -3,0 +4,5 @@
 +# The kernel config budget still lives in mvm's xtask gate. Read it from the
 +# pinned mvm commit rather than keeping a second copy of the numbers here.
 +# shellcheck source=scripts/mvm-source.sh
 +. "$(dirname "${BASH_SOURCE[0]}")/mvm-source.sh"
 +
- arch="${1:?usage: build-kernel-artifacts.sh <aarch64|x86_64>}"
- case "$arch" in
-   aarch64|x86_64) ;;
-@@ -11,7 +16,7 @@
- mkdir -p staging
- for variant in builder workload; do
-   store=$(nix build \
+@@ -14 +19 @@
 -    "./nix/images/builder-vm#packages.${system}.${variant}-kernel" \
 +    ".#legacyPackages.${system}.builder-vm.${variant}-kernel" \
-     --impure --no-link --print-out-paths | head -1)
-   if [[ -f "$store/Image" ]]; then
-     src="$store/Image"
-@@ -26,7 +31,7 @@
- done
- 
- config=$(nix build \
+@@ -29 +34 @@
 -  "./nix/images/builder-vm#packages.${system}.workload-kernel-configfile" \
 +  ".#legacyPackages.${system}.builder-vm.workload-kernel-configfile" \
-   --impure --no-link --print-out-paths | head -1)
- kernel_version=$(basename "$store" | sed -E 's/^linux-//')
- config_hash=$(sha256sum "$config" | cut -d' ' -f1)
-@@ -38,7 +43,7 @@
- symbol_count=$(grep -c '=y$' "$config")
- budget_name="BUDGET_${arch^^}"
- budget=$(grep -oP "${budget_name}: usize = \K[0-9]+" \
+@@ -41 +46 @@
 -  xtask/src/check_kernel_config_budget.rs)
 +  "$(mvm_source_dir)/xtask/src/check_kernel_config_budget.rs")
- echo "workload kernel ${arch}: ${symbol_count} =y symbols (budget ${budget})"
- if [[ "$symbol_count" -gt "$budget" ]]; then
-   echo "workload kernel ${arch} has ${symbol_count} built-in symbols, over budget ${budget}" >&2
+@@ -48,11 +52,0 @@
+-# The in-guest orchestrator variant: resolve its configfile so the
+-# olddefconfig enable/disable guards run over the delta in CI, and record
+-# its symbol count for the size-cost record. No budget assertion — the
+-# ratchet covers the sealed workload kernel only.
+-k8s_config=$(nix build \
+-  "./nix/images/builder-vm#packages.${system}.workload-k8s-kernel-configfile" \
+-  --impure --no-link --print-out-paths | head -1)
+-cp "$k8s_config" "staging/workload-k8s-config-${arch}"
+-k8s_symbol_count=$(grep -c '=y$' "$k8s_config")
+-echo "workload-k8s kernel ${arch}: ${k8s_symbol_count} =y symbols (no budget)"
+-
+@@ -64,2 +57,0 @@
+-printf '{"arch":"%s","variant":"workload-k8s","y_symbol_count":%d}\n' \
+-  "$arch" "$k8s_symbol_count" > "staging/kernel-k8s-metrics-${arch}.json"

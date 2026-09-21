@@ -1,0 +1,5 @@
+# Upstream mvm image-tree files deliberately not copied here, as
+# <path in mvm> TAB <reason>. The drift gate verifies each path still exists
+# at the pinned commit and accounts for it when scanning nix/images/.
+nix/images/examples/llm-agent/default.nix	Workload-specific example; application and template composition does not belong in the base-image repository.
+nix/images/kernel/workload-k8s.nix	Kubernetes-specific kernel with guest bridge/veth/CNI-oriented facilities; rejected in favor of a generic NIC-less rootless base contract.
