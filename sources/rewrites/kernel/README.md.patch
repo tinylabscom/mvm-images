@@ -1,0 +1,7 @@
+--- a/nix/images/kernel/README.md
++++ b/kernel/README.md
+@@ -14,4 +13,0 @@
+-- [`workload-k8s.nix`](./workload-k8s.nix) — base + the same dm-verity
+-  delta + cgroup/namespace/netfilter/bridge plumbing for guests that host
+-  an in-guest orchestrator (rootless Kubernetes). Deliberately outside the
+-  tiny-kernel budget ratchet; measure with `workload-k8s-metrics`.
