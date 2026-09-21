@@ -73,6 +73,7 @@ exact set they were built against.
 ## Layout
 
 ```text
+justfile                contributor front door: build, pair, gate and manifest recipes
 flake.nix, flake.lock   the one flake: every image, one mvm pin
 images/
   builder-vm/image.nix       builder VM kernel + rootfs, Stage 0 rootfs, kernel attrs
@@ -110,6 +111,12 @@ copied from `mvm` and every intended difference;
 pinned commit by anything else.
 
 ### Building locally
+
+Every documented command below is also a `just` recipe (`just --list`):
+`just build <role> [attr]` for the plain Nix builds, `just builder-vm [mvm-checkout]`
+for the builder image, `just with-mvm <checkout> <role>` for a paired checkout,
+`just image-set [mvm-checkout] <role>` on a host without Nix, and
+`just release-check` for the pre-publish gates.
 
 The images are Linux artifacts, so build them on Linux (or through a Linux
 remote builder):
