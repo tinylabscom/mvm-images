@@ -9,13 +9,18 @@
 @@ -14 +19 @@
 -    "./nix/images/builder-vm#packages.${system}.${variant}-kernel" \
 +    ".#legacyPackages.${system}.builder-vm.${variant}-kernel" \
-@@ -28,3 +33,12 @@
+@@ -28,3 +33,17 @@
 -config=$(nix build \
 -  "./nix/images/builder-vm#packages.${system}.workload-kernel-configfile" \
 -  --impure --no-link --print-out-paths | head -1)
 +for variant in builder workload; do
++  if [[ "$variant" == builder ]]; then
++    config_attr="kernel-configfile"
++  else
++    config_attr="workload-kernel-configfile"
++  fi
 +  config=$(nix build \
-+    ".#legacyPackages.${system}.builder-vm.${variant}-kernel-configfile" \
++    ".#legacyPackages.${system}.builder-vm.${config_attr}" \
 +    --impure --no-link --print-out-paths | head -1)
 +  cp "$config" "staging/${variant}-config-${arch}"
 +done
@@ -25,12 +30,12 @@
 +  --kernel-config "staging/workload-config-${arch}"
 +
 +config="staging/workload-config-${arch}"
-@@ -36 +49,0 @@
+@@ -36 +54,0 @@
 -cp "$config" "staging/workload-config-${arch}"
-@@ -41 +54 @@
+@@ -41 +59 @@
 -  xtask/src/check_kernel_config_budget.rs)
 +  "$(mvm_source_dir)/xtask/src/check_kernel_config_budget.rs")
-@@ -48,11 +60,0 @@
+@@ -48,11 +65,0 @@
 -# The in-guest orchestrator variant: resolve its configfile so the
 -# olddefconfig enable/disable guards run over the delta in CI, and record
 -# its symbol count for the size-cost record. No budget assertion — the
@@ -42,6 +47,6 @@
 -k8s_symbol_count=$(grep -c '=y$' "$k8s_config")
 -echo "workload-k8s kernel ${arch}: ${k8s_symbol_count} =y symbols (no budget)"
 -
-@@ -64,2 +65,0 @@
+@@ -64,2 +70,0 @@
 -printf '{"arch":"%s","variant":"workload-k8s","y_symbol_count":%d}\n' \
 -  "$arch" "$k8s_symbol_count" > "staging/kernel-k8s-metrics-${arch}.json"

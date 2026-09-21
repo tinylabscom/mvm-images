@@ -31,8 +31,13 @@ for variant in builder workload; do
 done
 
 for variant in builder workload; do
+  if [[ "$variant" == builder ]]; then
+    config_attr="kernel-configfile"
+  else
+    config_attr="workload-kernel-configfile"
+  fi
   config=$(nix build \
-    ".#legacyPackages.${system}.builder-vm.${variant}-kernel-configfile" \
+    ".#legacyPackages.${system}.builder-vm.${config_attr}" \
     --impure --no-link --print-out-paths | head -1)
   cp "$config" "staging/${variant}-config-${arch}"
 done
