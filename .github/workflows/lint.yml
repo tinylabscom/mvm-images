@@ -24,15 +24,16 @@ jobs:
       - name: Every remote action is pinned by commit SHA
         run: ./scripts/check-action-pins.sh
 
-  # The scripts that pair a local mvm checkout with this one: the manifest
-  # emitter and the --mvm-checkout argument handling. Throwaway git
-  # repositories only; nothing is built.
-  local-mvm-scripts:
+  # Fast tests and executable image contracts. The BDD and E2E-plan tests are
+  # repository-local and never run mvm or mvmctl.
+  tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Local-checkout script tests
+      - name: Python unit tests
         run: python3 -m unittest discover -s scripts/tests -v
+      - name: BDD image contracts
+        run: ./scripts/run-bdd.py

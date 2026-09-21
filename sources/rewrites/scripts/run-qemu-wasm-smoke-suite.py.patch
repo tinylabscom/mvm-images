@@ -1,0 +1,90 @@
+--- a/scripts/run-qemu-wasm-smoke-suite.py
++++ b/scripts/run-qemu-wasm-smoke-suite.py
+@@ -2 +2 @@
+-"""Headless-Chromium smoke suite for the WebLinux demo.
++"""Headless-Chromium smoke suite for the standalone QEMU-Wasm pack.
+@@ -4,6 +4,2 @@
+-Runs a short sequence of guest commands through the same page harness as
+-`run-qemu-wasm-demo-chromium.py`, but only uses commands known to be stable
+-inside the QEMU-Wasm browser engine.  In particular, host-bound traffic via
+-SLIRP currently triggers a worker divide-by-zero in the Emscripten socket
+-emulation layer, so this suite exercises loopback networking and the
+-allow-host /etc/hosts plumbing instead.
++The pack has no guest network device. This suite delegates to the standalone
++boot harness and checks the guest readiness marker; it never invokes mvm.
+@@ -16 +12 @@
+-DEMO_SCRIPT = os.path.join(os.path.dirname(__file__), "run-qemu-wasm-demo-chromium.py")
++SMOKE_SCRIPT = os.path.join(os.path.dirname(__file__), "run-qemu-wasm-smoke-chromium.py")
+@@ -19,5 +15,3 @@
+-def run_case(demo_dir: str, chrome_bin: str, command: str, allow_host: str = "") -> dict:
+-    """Run a single command through the demo harness and return its result dict."""
+-    args = [sys.executable, DEMO_SCRIPT, demo_dir, chrome_bin, command]
+-    if allow_host:
+-        args.append(allow_host)
++def run_boot(pack_dir: str, chrome_bin: str) -> dict:
++    """Boot the pack once and return the smoke harness result."""
++    args = [sys.executable, SMOKE_SCRIPT, pack_dir, chrome_bin]
+@@ -28 +22 @@
+-        raise RuntimeError(f"no result block for command {command!r}\n{proc.stdout}\n{proc.stderr}")
++        raise RuntimeError(f"no result block from browser boot\n{proc.stdout}\n{proc.stderr}")
+@@ -38 +32 @@
+-    demo_dir = sys.argv[1]
++    pack_dir = sys.argv[1]
+@@ -40,49 +34,5 @@
+-
+-    cases = [
+-        ("ps", "", "init"),
+-        ("top -n1", "", "Mem"),
+-        ("tree", "", "├── bin"),
+-        ("ping -c1 127.0.0.1", "", "0% packet loss"),
+-        ("cat /etc/hosts", "demo.mvm.local", "10.0.2.2 demo.mvm.local"),
+-    ]
+-
+-    results = []
+-    failed = False
+-    for command, allow_host, expected in cases:
+-        print(f"\n>>> running: {command!r} (allowHost={allow_host!r})", file=sys.stderr)
+-        try:
+-            result = run_case(demo_dir, chrome_bin, command, allow_host)
+-        except Exception as exc:
+-            print(f"FAIL: {command!r} raised {exc}", file=sys.stderr)
+-            failed = True
+-            results.append({"command": command, "success": False, "error": str(exc)})
+-            continue
+-
+-        stderr_path = result.get("stderr_file")
+-        log = ""
+-        if stderr_path and os.path.isfile(stderr_path):
+-            with open(stderr_path, "r", errors="replace") as fh:
+-                log = fh.read()
+-
+-        ok = result.get("success") is True and expected in log
+-        if not ok:
+-            failed = True
+-            print(f"FAIL: {command!r} success={result.get('success')} expected={expected!r}", file=sys.stderr)
+-        else:
+-            print(f"PASS: {command!r} ({result.get('marker_time_seconds'):.2f}s to ready)", file=sys.stderr)
+-
+-        results.append({
+-            "command": command,
+-            "success": ok,
+-            "status": result.get("status"),
+-            "marker_time_seconds": result.get("marker_time_seconds"),
+-            "total_elapsed_seconds": result.get("total_elapsed_seconds"),
+-            "stderr_file": stderr_path,
+-        })
+-
+-    summary = {
+-        "success": not failed,
+-        "passed": sum(1 for r in results if r.get("success")),
+-        "failed": sum(1 for r in results if not r.get("success")),
+-        "results": results,
+-    }
++    try:
++        result = run_boot(pack_dir, chrome_bin)
++    except Exception as exc:
++        result = {"success": False, "error": str(exc)}
++    summary = {"success": result.get("success") is True, "result": result}
+@@ -91 +41 @@
+-    sys.exit(0 if not failed else 1)
++    sys.exit(0 if summary["success"] else 1)

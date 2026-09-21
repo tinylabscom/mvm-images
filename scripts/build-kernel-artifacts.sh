@@ -30,15 +30,23 @@ for variant in builder workload; do
   cp "$src" "staging/vmlinux-${arch}-${variant}"
 done
 
-config=$(nix build \
-  ".#legacyPackages.${system}.builder-vm.workload-kernel-configfile" \
-  --impure --no-link --print-out-paths | head -1)
+for variant in builder workload; do
+  config=$(nix build \
+    ".#legacyPackages.${system}.builder-vm.${variant}-kernel-configfile" \
+    --impure --no-link --print-out-paths | head -1)
+  cp "$config" "staging/${variant}-config-${arch}"
+done
+
+scripts/check_no_network_devices.py \
+  --kernel-config "staging/builder-config-${arch}" \
+  --kernel-config "staging/workload-config-${arch}"
+
+config="staging/workload-config-${arch}"
 kernel_version=$(basename "$store" | sed -E 's/^linux-//')
 config_hash=$(sha256sum "$config" | cut -d' ' -f1)
 artifact_hash=$(sha256sum "staging/vmlinux-${arch}-workload" | cut -d' ' -f1)
 printf '{"kernel_version":"%s","config_hash":"%s","artifact_hash":"%s"}\n' \
   "$kernel_version" "$config_hash" "$artifact_hash" > "staging/kernel-${arch}.json"
-cp "$config" "staging/workload-config-${arch}"
 
 symbol_count=$(grep -c '=y$' "$config")
 budget_name="BUDGET_${arch^^}"

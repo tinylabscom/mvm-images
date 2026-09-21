@@ -396,6 +396,7 @@ jobs:
             staging/kernel-${{ matrix.arch }}-checksums-sha256.txt
             staging/kernel-${{ matrix.arch }}.json
             staging/kernel-metrics-${{ matrix.arch }}.json
+            staging/builder-config-${{ matrix.arch }}
             staging/workload-config-${{ matrix.arch }}
 
   # x86_64 only, as in mvm: the pack is a browser runtime for an x86_64 guest.
@@ -413,9 +414,16 @@ jobs:
           set -euo pipefail
           STORE_PATH=$(nix build ".#legacyPackages.x86_64-linux.qemu-wasm.qemu-wasm-smoke-pack" \
             --no-link --print-out-paths | head -1)
+          echo "QEMU_WASM_STORE_PATH=$STORE_PATH" >> "$GITHUB_ENV"
           mkdir -p staging
           tar -C "$STORE_PATH" -czf staging/qemu-wasm-smoke-pack.tar.gz .
           (cd staging && sha256sum qemu-wasm-smoke-pack.tar.gz > qemu-wasm-smoke-pack.tar.gz.sha256)
+      - name: Boot the pack directly in Chromium (no mvm)
+        run: |
+          set -euo pipefail
+          chrome=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$chrome"
+          ./scripts/run-qemu-wasm-smoke-chromium.py "$QEMU_WASM_STORE_PATH" "$chrome"
       - name: Upload QEMU-WASM browser pack
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

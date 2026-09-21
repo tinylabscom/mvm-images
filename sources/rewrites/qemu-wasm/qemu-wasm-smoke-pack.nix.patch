@@ -1,0 +1,12 @@
+--- a/nix/packages/qemu-wasm-smoke-pack.nix
++++ b/qemu-wasm/qemu-wasm-smoke-pack.nix
+@@ -108 +108,5 @@
+-      '-nographic',
++      '-nodefaults',
++      '-no-user-config',
++      '-display', 'none',
++      '-monitor', 'none',
++      '-serial', 'stdio',
+@@ -112,2 +115,0 @@
+-      '-netdev', 'user,id=net0',
+-      '-device', 'virtio-net-pci,netdev=net0,romfile=',

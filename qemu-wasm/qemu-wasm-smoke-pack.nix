@@ -105,12 +105,14 @@ stdenv.mkDerivation {
       console.log('SMOKE: runtime initialized');
     };
     window.Module.arguments = [
-      '-nographic',
+      '-nodefaults',
+      '-no-user-config',
+      '-display', 'none',
+      '-monitor', 'none',
+      '-serial', 'stdio',
       '-M', 'pc',
       '-m', '512M',
       '-cpu', 'qemu64',
-      '-netdev', 'user,id=net0',
-      '-device', 'virtio-net-pci,netdev=net0,romfile=',
       '-accel', 'tcg,tb-size=500',
       '-L', 'pack/',
       '-drive', 'if=virtio,format=raw,file=pack/rootfs.bin',

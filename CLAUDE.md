@@ -31,3 +31,8 @@ the published
 
 Do not overwrite unrelated working-tree changes or regenerate pins and locks
 unless the task explicitly requires it.
+
+The test suite is standalone: never run `mvm`, `mvmctl` or `bin/dev` from a
+BDD or E2E test. Direct boot tests invoke QEMU, Firecracker or the browser VMM
+against artifacts built here, with explicit device lists, vsock, and no
+network interface.

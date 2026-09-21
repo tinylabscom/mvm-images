@@ -122,7 +122,7 @@ def get_rss_kib(pid: int) -> int:
 
 def run_test(pack_dir: str, chrome_bin: str, port: int = 8765, timeout: float = 600):
     user_data_base = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", ".mvm-test", "chromium-user-data")
+        os.path.join(os.path.dirname(__file__), "..", ".image-test", "chromium-user-data")
     )
     os.makedirs(user_data_base, exist_ok=True)
     import tempfile

@@ -11,15 +11,15 @@
 # boot under libkrun / Firecracker and reach the host over virtio +
 # vsock. The builder VM is a superset: it additionally mounts virtio-fs
 # host shares, overlays a persistent `/nix` store, runs the nix-build
-# sandbox (user namespaces + cgroups), and installs an iptables egress
-# lockdown — none of which a workload guest needs. Those land in the
+# sandbox (user namespaces + cgroups) — none of which a workload guest needs.
+# Those land in the
 # builder's `extraEnables` (see `nix/images/kernel/builder.nix`).
 #
 # Why slim / all-built-in: a stock `pkgs.linuxPackages.kernel` ships
 # the features we need as `=m`, forcing every consumer to ship a
 # `/lib/modules/<kver>/` tree and modprobe each one at the right moment
-# (overlay before mount, vsock before socket(), iptables before rule
-# install). Each `=m` is a silent-failure surface. Flipping everything
+# (overlay before mount, vsock before socket()). Each `=m` is a silent-failure
+# surface. Flipping everything
 # we need to `=y` makes modprobe a no-op and deletes the module tree.
 # Five distinct ways the module contract broke during validation drove
 # this decision.
@@ -75,10 +75,9 @@ let
     # virtio bus + BOTH transports (sans virtio-fs — that's builder-only; a
     # sealed workload mounts no host shares). Both transports are required
     # because the backends differ: libkrun/Firecracker/HVF present virtio over
-    # MMIO, but **QEMU attaches its devices over PCI** (`virtio-net-pci`,
-    # `vhost-vsock-pci` — see the QEMU driver's device arguments). A kernel
-    # without PCI/VIRTIO_PCI boots blind there — no virtio-console (zero bytes
-    # on hvc0), no virtio-net, no virtio-block — so those VMs hang at boot.
+    # MMIO, but **QEMU attaches its block, console and vsock devices over PCI**.
+    # A kernel without PCI/VIRTIO_PCI boots blind there — no virtio-console
+    # (zero bytes on hvc0), no virtio-block or vsock — so those VMs hang at boot.
     # PCI + PCI_MSI + VIRTIO_PCI therefore stay enabled; do not drop them as
     # "MMIO-only dead weight" (dropping them has broken every boot on a
     # PCI-attached backend before). The generic ECAM PCI host controller that
@@ -90,7 +89,6 @@ let
     "PCI"
     "PCI_MSI"
     "VIRTIO_BLK"
-    "VIRTIO_NET"
     "VIRTIO_CONSOLE"
     "HVC_DRIVER"
     "VSOCKETS"
@@ -241,6 +239,10 @@ let
     "QUOTA"
     "BRIDGE"
     "MACVLAN"
+    "NETDEVICES"
+    "VIRTIO_NET"
+    "TUN"
+    "VETH"
     "XFRM_USER"
     "XFRM_ALGO"
     "NET_IPVTI"
@@ -264,8 +266,8 @@ let
     "MQ_IOSCHED_KYBER"
 
     # Traffic-control classifiers, actions and qdiscs are not part of the
-    # guest networking contract. The opt-in TUN path needs only the network
-    # device and IP stack; policy and relay enforcement live on the host.
+    # guest networking contract. There is no network-device path; policy and
+    # external sockets live on the host side of authenticated FlowMux/vsock.
     "NET_SCHED"
 
     # Every supported VMM exposes one uniform guest-memory node and direct
@@ -565,9 +567,9 @@ let
     # the protocol stack alone (SOUND/WIRELESS/USB above) leaves the
     # device subtree compiling — the umbrella menu symbol gates the
     # drivers/<x>/ directory, so it must go too. Each parent cascades its
-    # vendor subtree via olddefconfig. We carry only VIRTIO_NET; every
-    # vendor NIC, WLAN, WWAN, and CAN driver is dead weight.
-    "ETHERNET" # drivers/net/ethernet — keep NETDEVICES + VIRTIO_NET
+    # vendor subtree via olddefconfig. No network device is part of the guest
+    # ABI; loopback and AF_VSOCK do not require CONFIG_NETDEVICES.
+    "ETHERNET"
     "WLAN"
     "WWAN"
     "CAN" # drivers/net/{wireless,wwan,can}
@@ -618,7 +620,7 @@ let
     # uses. Each cascades its family (drivers + helpers) via olddefconfig.
     "NFS_FS" # no network filesystems mounted
     "PHYLIB"
-    "MDIO_DEVICE" # ethernet PHY mgmt — virtio-net has no PHY
+    "MDIO_DEVICE" # ethernet PHY mgmt — no guest NIC exists
     "VFIO" # device passthrough — unused (no PCI passthrough)
     "IPMI_HANDLER" # no BMC / out-of-band mgmt
     "CPU_FREQ"
