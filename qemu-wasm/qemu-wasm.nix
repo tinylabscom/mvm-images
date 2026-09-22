@@ -141,11 +141,6 @@ let
     sha256 = "1zhpyw37qihh5p69psg6b60m3qyc6svkx59j2fmmld3gz3a0rxnj";
   };
 
-  slirpSrc = fetchurl {
-    url = "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/26be815b86e8d49add8c9a8b320239b9594ff03d/libslirp-26be815b86e8d49add8c9a8b320239b9594ff03d.tar.gz";
-    sha256 = "1jdv47cq5aplyj3kz79jpapbfm3wv26inh8szjwrl99z47491ldb";
-  };
-
   arbitraryIntSrc = fetchCrate {
     crate = "arbitrary-int";
     version = "1.2.7";
@@ -281,9 +276,6 @@ stdenv.mkDerivation (finalAttrs: {
     tar -xzf ${libvfioUserSrc} -C qemu-wasm-src/subprojects
     mv qemu-wasm-src/subprojects/libvfio-user-* qemu-wasm-src/subprojects/libvfio-user
 
-    tar -xzf ${slirpSrc} -C qemu-wasm-src/subprojects
-    mv qemu-wasm-src/subprojects/libslirp-* qemu-wasm-src/subprojects/slirp
-
     tar -xzf ${arbitraryIntSrc} -C qemu-wasm-src/subprojects
     tar -xzf ${bilgeSrc} -C qemu-wasm-src/subprojects
     tar -xzf ${bilgeImplSrc} -C qemu-wasm-src/subprojects
@@ -412,7 +404,7 @@ stdenv.mkDerivation (finalAttrs: {
           --enable-tcg \
           --with-coroutine=fiber \
           --enable-virtfs \
-          --enable-slirp \
+          --disable-slirp \
           -Ddefault_library=static \
           --extra-cflags="$EXTRA_CFLAGS" \
           --extra-cxxflags="$EXTRA_CFLAGS" \
@@ -439,7 +431,6 @@ stdenv.mkDerivation (finalAttrs: {
     )
     link_libs = (
         '-Wl,--start-group libqemuutil.a subprojects/dtc/libfdt/libfdt.a '
-        'subprojects/slirp/libslirp.a '
         '/build/deps/target/lib/libglib-2.0.a /build/deps/target/lib/libgobject-2.0.a '
         '/build/deps/target/lib/libgthread-2.0.a /build/deps/target/lib/libgmodule-2.0.a '
         '/build/deps/target/lib/libgio-2.0.a /build/deps/target/lib/libpcre2-8.a '

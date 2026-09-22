@@ -97,6 +97,35 @@ release-check:
     scripts/check-action-pins.sh
     scripts/check-source-drift.sh
     scripts/check-local-mvm-override.sh '{{system}}'
+    scripts/check_no_network_devices.py
+    python3 -m unittest discover -s scripts/tests -v
+    scripts/run-bdd.py
+
+# Fast repository-local verification. Neither recipe runs mvm or mvmctl.
+test:
+    python3 -m unittest discover -s scripts/tests -v
+    scripts/check_no_network_devices.py
+
+bdd:
+    scripts/run-bdd.py
+
+# Print both direct-VMM plans without building or booting an image.
+e2e-plan artifacts="result":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --plan
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --plan
+
+# Boot a qemu-wasm-smoke-image output directly. The directory must contain
+# kernel.img, vmlinux and rootfs.bin. These require a capable native VMM host
+# but never an mvm checkout or process.
+e2e-qemu artifacts binary="qemu-system-x86_64":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --binary '{{binary}}'
+
+e2e-firecracker artifacts binary="firecracker":
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}'
+
+# Boot the browser pack directly under headless Chromium.
+e2e-qemu-wasm pack chrome:
+    scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'
 
 # Compare this repository's build with mvm's in-tree build of the same role at
 # the pinned commit — the reproduce.yml lane by hand. Needs a checkout of the

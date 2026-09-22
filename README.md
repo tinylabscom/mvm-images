@@ -209,7 +209,41 @@ refuses, fetch anonymously with `NIX_CONFIG='access-tokens ='`.
 
 CI builds every image on both architectures on pull requests that touch the
 image sources (`.github/workflows/build.yml`) and keeps the results as workflow
-artifacts. It never releases or signs.
+artifacts. It never releases or signs. The QEMU/WebAssembly job also boots its
+pack directly in headless Chromium and waits for the guest readiness marker.
+
+### Tests
+
+The test stack is self-contained in this repository. It never starts `mvm`,
+`mvmctl`, `bin/dev`, or another process from a sibling `mvm` checkout:
+
+```sh
+just test                         # Python unit tests + no-device contract
+just bdd                          # executable Gherkin scenarios
+just e2e-plan /path/to/artifacts # inspect QEMU + Firecracker plans
+just e2e-qemu /path/to/artifacts
+just e2e-firecracker /path/to/artifacts
+just e2e-qemu-wasm /path/to/pack /path/to/chromium
+```
+
+The native boot commands take the output of
+`.#legacyPackages.x86_64-linux.qemu-wasm.qemu-wasm-smoke-image`, a directory
+containing the QEMU `kernel.img`, Firecracker `vmlinux`, and shared
+`rootfs.bin`. They launch the VMM directly and wait for
+`QEMU-WASM-SMOKE-READY`. QEMU runs with `-nodefaults` and an explicit
+block/serial/vsock device list. Firecracker receives the ELF kernel and a
+generated configuration with block and vsock devices and no
+`network-interfaces` section. The harness copies the rootfs out of the
+immutable Nix store before mounting it read/write. Missing VMM support or
+`/dev/kvm` is a hard failure, not a silent skip.
+
+`features/standalone_images.feature` holds the human-readable BDD contract.
+`scripts/check_no_network_devices.py` checks kernel, browser, and direct-VMM
+definitions for forbidden network devices. Both architecture jobs also feed
+the resolved builder and workload `.config` files to that checker, proving
+Kconfig did not restore a built-in or modular network device. The fast suite
+runs on every pull request; the browser boot is the hardware-independent E2E
+lane, while native QEMU and Firecracker commands are for KVM-capable runners.
 
 `.github/workflows/reproduce.yml` (`scripts/compare-same-commit.sh`) builds the
 builder VM and the default microVM a second way on the same runner: from

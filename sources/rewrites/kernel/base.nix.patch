@@ -1,6 +1,46 @@
 --- a/nix/images/kernel/base.nix
 +++ b/kernel/base.nix
-@@ -684,14 +683,0 @@
+@@ -14,2 +14,2 @@
+-# sandbox (user namespaces + cgroups), and installs an iptables egress
+-# lockdown — none of which a workload guest needs. Those land in the
++# sandbox (user namespaces + cgroups) — none of which a workload guest needs.
++# Those land in the
+@@ -21,2 +21,2 @@
+-# (overlay before mount, vsock before socket(), iptables before rule
+-# install). Each `=m` is a silent-failure surface. Flipping everything
++# (overlay before mount, vsock before socket()). Each `=m` is a silent-failure
++# surface. Flipping everything
+@@ -78,4 +78,3 @@
+-    # MMIO, but **QEMU attaches its devices over PCI** (`virtio-net-pci`,
+-    # `vhost-vsock-pci` — see the QEMU driver's device arguments). A kernel
+-    # without PCI/VIRTIO_PCI boots blind there — no virtio-console (zero bytes
+-    # on hvc0), no virtio-net, no virtio-block — so those VMs hang at boot.
++    # MMIO, but **QEMU attaches its block, console and vsock devices over PCI**.
++    # A kernel without PCI/VIRTIO_PCI boots blind there — no virtio-console
++    # (zero bytes on hvc0), no virtio-block or vsock — so those VMs hang at boot.
+@@ -93 +91,0 @@
+-    "VIRTIO_NET"
+@@ -243,0 +242,4 @@
++    "NETDEVICES"
++    "VIRTIO_NET"
++    "TUN"
++    "VETH"
+@@ -267,2 +269,2 @@
+-    # guest networking contract. The opt-in TUN path needs only the network
+-    # device and IP stack; policy and relay enforcement live on the host.
++    # guest networking contract. There is no network-device path; policy and
++    # external sockets live on the host side of authenticated FlowMux/vsock.
+@@ -568,3 +570,3 @@
+-    # vendor subtree via olddefconfig. We carry only VIRTIO_NET; every
+-    # vendor NIC, WLAN, WWAN, and CAN driver is dead weight.
+-    "ETHERNET" # drivers/net/ethernet — keep NETDEVICES + VIRTIO_NET
++    # vendor subtree via olddefconfig. No network device is part of the guest
++    # ABI; loopback and AF_VSOCK do not require CONFIG_NETDEVICES.
++    "ETHERNET"
+@@ -621 +623 @@
+-    "MDIO_DEVICE" # ethernet PHY mgmt — virtio-net has no PHY
++    "MDIO_DEVICE" # ethernet PHY mgmt — no guest NIC exists
+@@ -684,14 +685,0 @@
 -      # Symbols to re-enable that base.nix disables (audited cuts, and —
 -      # deliberately — requiredDisables too). An exemption is how a second,
 -      # non-sealed kernel posture keeps a subsystem the sealed workload
@@ -15,7 +55,7 @@
 -      # eval time below, before the olddefconfig enable guard re-checks it
 -      # against the resolved config.
 -      disableExemptions ? [ ],
-@@ -699,8 +684,0 @@
+@@ -699,8 +686,0 @@
 -    let
 -      # Exemptions that name no enable request would be arch-dependent
 -      # no-ops (see above) — refuse them at eval time, naming the orphans.
@@ -24,21 +64,21 @@
 -    if orphans != [ ] then
 -      throw "mkKernel: disableExemptions without a matching extraEnables entry (defconfig defaults are arch-dependent, so an exemption alone cannot request a symbol): ${pkgs.lib.concatStringsSep " " orphans}"
 -    else
-@@ -719,2 +696,0 @@
+@@ -719,2 +698,0 @@
 -        # Exemptions apply to base's audited cuts only; the caller's own
 -        # required disables stay hard.
-@@ -722,2 +698 @@
+@@ -722,2 +700 @@
 -          pkgs.lib.subtractLists disableExemptions (baseDisables ++ extraDisables)
 -          ++ requiredExtraDisables
 +          baseDisables ++ extraDisables ++ requiredExtraDisables
-@@ -725,4 +700 @@
+@@ -725,4 +702 @@
 -        requiredDisableList = pkgs.lib.concatStringsSep " " (
 -          pkgs.lib.subtractLists disableExemptions requiredDisables
 -          ++ requiredExtraDisables
 -        );
 +        requiredDisableList = pkgs.lib.concatStringsSep " " (requiredDisables ++ requiredExtraDisables);
-@@ -838 +809,0 @@
+@@ -838 +811,0 @@
 -      disableExemptions ? [ ],
-@@ -845 +816 @@
+@@ -845 +818 @@
 -        inherit extraEnables extraDisables requiredExtraDisables disableExemptions;
 +        inherit extraEnables extraDisables requiredExtraDisables;

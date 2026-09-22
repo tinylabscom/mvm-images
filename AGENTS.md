@@ -75,3 +75,12 @@ otherwise incompatible CNI or container network work by adding guest devices.
 
 Preserve unrelated user changes. In particular, do not overwrite a local mvm
 pin advance or regenerate lock files unless the task explicitly requires it.
+
+## Tests
+
+BDD and end-to-end tests are owned and run here. They must not start `mvm`,
+`mvmctl`, `bin/dev`, or any other host-runtime process from the `mvm`
+repository. Boot tests invoke the VMM directly against artifacts built here.
+Every VMM plan must use an explicit device list, attach vsock, and contain no
+network interface or NIC/TAP/TUN fallback. Keep the fast Gherkin contracts in
+the ordinary pull-request gate and run real boot probes on capable runners.

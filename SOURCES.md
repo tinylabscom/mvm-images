@@ -101,6 +101,12 @@ Every change is one of these, and nothing else.
    guest bridge/veth-style networking that violates this repository's
    permanent NIC-less FlowMux/vsock contract. Generic rootless capabilities
    are designed and published here under workload-neutral names.
+9. **Guest network devices are removed from the image sources.** The shared
+   kernel explicitly disables `NETDEVICES`, `VIRTIO_NET`, `TUN`, `VETH`,
+   bridges and macvlan. The QEMU/WebAssembly engine is built without libslirp,
+   its smoke guest configures loopback only, and its launch plan contains no
+   network device. These intentional differences implement this repository's
+   permanent vsock-only contract and are exercised by the local BDD/E2E gates.
 
 ## Deliberately not copied
 

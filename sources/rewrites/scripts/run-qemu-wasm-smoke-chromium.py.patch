@@ -1,0 +1,5 @@
+--- a/scripts/run-qemu-wasm-smoke-chromium.py
++++ b/scripts/run-qemu-wasm-smoke-chromium.py
+@@ -125 +125 @@
+-        os.path.join(os.path.dirname(__file__), "..", ".mvm-test", "chromium-user-data")
++        os.path.join(os.path.dirname(__file__), "..", ".image-test", "chromium-user-data")
