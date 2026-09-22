@@ -73,11 +73,20 @@ def _check_entry_points() -> None:
         raise AssertionError("standalone test invokes mvm: " + ", ".join(violations))
 
 
+def _check_rootless() -> None:
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_rootless_tenant.py")],
+        cwd=ROOT,
+        check=True,
+    )
+
+
 STEPS = {
     "the mvm-images source tree": lambda: None,
     "I inspect the kernel device contract": lambda: _run_check("kernel"),
     "I inspect the QEMU-Wasm device contract": lambda: _run_check("qemu-wasm"),
     "I inspect the standalone E2E plans": lambda: _run_check("e2e"),
+    "I inspect the rootless tenant contract": _check_rootless,
     "I inspect the standalone test entry points": _check_entry_points,
     "the contract passes": lambda: None,
 }

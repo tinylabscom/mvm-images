@@ -22,7 +22,7 @@ The essential architecture is:
   configuration, image name or kernel name in this repository. Those belong
   in the relevant application or template repository.
 - Select images through generic manifest capabilities, not workload names or
-backend-specific forks.
+  backend-specific forks.
 
 The canonical networking contract is
 `../mvm/public/src/content/docs/guides/networking.md` in a sibling checkout and
@@ -36,3 +36,6 @@ The test suite is standalone: never run `mvm`, `mvmctl` or `bin/dev` from a
 BDD or E2E test. Direct boot tests invoke QEMU, Firecracker or the browser VMM
 against artifacts built here, with explicit device lists, vsock, and no
 network interface.
+The rootless smoke must additionally witness unprivileged namespace and cgroup
+operation plus `crun`/`fuse-overlayfs`, while asserting that loopback is the
+only interface and `/dev/net/tun` is absent.

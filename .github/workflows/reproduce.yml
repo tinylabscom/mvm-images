@@ -12,6 +12,11 @@ on:
     paths:
       - .github/workflows/reproduce.yml
       - scripts/compare-same-commit.sh
+      - flake.nix
+      - flake.lock
+      - kernel/**
+      - images/default-tenant/**
+      - images/rootless-tenant/**
   workflow_dispatch: {}
 
 permissions:
@@ -72,3 +77,38 @@ jobs:
           name: same-commit-${{ matrix.role }}-${{ matrix.arch }}
           if-no-files-found: ignore
           path: ${{ runner.temp }}/compare
+
+  rootless-rebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Rebuild the sealed rootless image byte-for-byte
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          ref=".#legacyPackages.${ARCH}-linux.rootless-tenant.default"
+          out=$(nix build "$ref" --impure --no-link --print-out-paths | head -1)
+          mkdir -p "$RUNNER_TEMP/rootless-rebuild"
+          (cd "$out" && find -L . -type f -print0 | sort -z | xargs -0 sha256sum) \
+            > "$RUNNER_TEMP/rootless-rebuild/rootless-${ARCH}.sha256"
+          nix build "$ref" --impure --no-link --rebuild -L
+      - name: Upload rootless reproducibility witness
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rootless-rebuild-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/rootless-rebuild

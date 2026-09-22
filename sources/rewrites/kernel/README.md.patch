@@ -1,7 +1,20 @@
 --- a/nix/images/kernel/README.md
 +++ b/kernel/README.md
-@@ -14,4 +13,0 @@
+@@ -6 +6 @@
+-olddefconfig`. Two kernels derive from one shared base:
++olddefconfig`. Three kernels derive from one shared base:
+@@ -14,4 +14,4 @@
 -- [`workload-k8s.nix`](./workload-k8s.nix) — base + the same dm-verity
 -  delta + cgroup/namespace/netfilter/bridge plumbing for guests that host
 -  an in-guest orchestrator (rootless Kubernetes). Deliberately outside the
 -  tiny-kernel budget ratchet; measure with `workload-k8s-metrics`.
++- [`rootless.nix`](./rootless.nix) — the verified workload kernel plus the
++  user/mount/PID/IPC/UTS namespace, cgroup v2, PTY and notification floor for
++  generic rootless containers. It deliberately has no network namespace or
++  network device; external traffic still uses FlowMux over vsock.
+@@ -86,0 +87 @@
++nix build .#rootless-configfile -o /tmp/rootless.config
+@@ -91,0 +93 @@
++grep '=y$' /tmp/kernel-configs/rootless.config | sort > /tmp/rootless.y.txt
+@@ -98,0 +101 @@
++nix build .#rootless-metrics -o /tmp/rootless-metrics

@@ -13,7 +13,7 @@
 +  # `outputs` below with them. This file is not a flake on its own.
 @@ -21 +17 @@
 -    { self, nixpkgs, microvm, ... }:
-+    { self, nixpkgs, microvm, mvm-src, ... }:
++    { self, nixpkgs, microvm, mvm-src, rootless ? false, ... }:
 @@ -26,4 +22,3 @@
 -      # Same impure workspace-path override the sibling image flakes use.
 -      workspaceRoot =
@@ -37,9 +37,11 @@
 @@ -56 +48 @@
 -        import (workspaceRoot + "/nix/images/kernel/base.nix") { inherit pkgs; };
 +        import ../../kernel/base.nix { inherit pkgs; };
-@@ -58 +50 @@
+@@ -58,2 +50,2 @@
 -        import (workspaceRoot + "/nix/images/kernel/workload.nix")
+-          { inherit pkgs; base = kernelBaseFor pkgs; };
 +        import ../../kernel/workload.nix
++          { inherit pkgs rootless; base = kernelBaseFor pkgs; };
 @@ -98,4 +90,7 @@
 -      # The commit whose mk-guest.nix produced this rootfs. Resolves for a git
 -      # flake ref; a `path:` flake has no revision to resolve and leaves this
@@ -52,3 +54,72 @@
 +      # revision to resolve and leaves this empty rather than inventing one,
 +      # exactly as mvm's own flake does for a `path:` build.
 +      generatorRev = mvm-src.rev or mvm-src.dirtyRev or "";
+@@ -131 +126 @@
+-      mkVariant = { system, sealed }:
++      mkVariant = { system, sealed, smoke ? false }:
+@@ -141 +136,26 @@
+-          imageName = if sealed then "mvm-default-microvm" else "mvm-default-microvm-dev";
++          qemuKernelFile = if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "bzImage";
++          imageName =
++            if rootless then
++              if smoke then "mvm-rootless-microvm-smoke"
++              else if sealed then "mvm-rootless-microvm"
++              else "mvm-rootless-microvm-dev"
++            else if sealed then "mvm-default-microvm"
++            else "mvm-default-microvm-dev";
++          rootlessProbe = ''
++            #!/bin/sh
++            set -eu
++            test "$(id -u)" = 1000
++            test -w /sys/fs/cgroup/mvm-workload
++            probe=/sys/fs/cgroup/mvm-workload/mvm-rootless-probe-$$
++            mkdir "$probe"
++            rmdir "$probe"
++            test ! -e /dev/net/tun
++            for dev in /sys/class/net/*; do
++              test "$(basename "$dev")" = lo
++            done
++            unshare -Urmpf /bin/true
++            crun --version >/dev/null
++            fuse-overlayfs --version >/dev/null
++            echo MVM-ROOTLESS-READY
++            exec sleep infinity
++          '';
+@@ -147 +167,6 @@
+-              then { command = [ "/bin/sleep" "infinity" ]; }
++              then {
++                command =
++                  if smoke
++                  then [ "/usr/local/bin/mvm-rootless-probe" ]
++                  else [ "/bin/sleep" "infinity" ];
++              }
+@@ -152 +177,10 @@
+-            packages = [ ];
++            packages = nixpkgs.lib.optionals rootless [
++              pkgs.crun
++              pkgs.fuse-overlayfs
++            ];
++            extraFiles = nixpkgs.lib.optionalAttrs smoke {
++              "/usr/local/bin/mvm-rootless-probe" = {
++                content = rootlessProbe;
++                mode = "0555";
++              };
++            };
+@@ -195,0 +230,12 @@
++            ${nixpkgs.lib.optionalString rootless ''
++              # Direct-QEMU test artifact. On x86 QEMU's Linux loader consumes
++              # a bzImage while Firecracker consumes the ELF above; both are
++              # built from the exact same resolved kernel configuration.
++              if [ -f ${kernelPkg}/${qemuKernelFile} ]; then
++                cp ${kernelPkg}/${qemuKernelFile} $out/kernel.img
++              else
++                echo "kernel ${kernelPkg} produced no ${qemuKernelFile}" >&2
++                exit 1
++              fi
++            ''}
++
+@@ -241,0 +288 @@
++              ${nixpkgs.lib.optionalString rootless "$out/kernel.img \\"}
+@@ -274,0 +322,2 @@
++      } // nixpkgs.lib.optionalAttrs rootless {
++        smoke = mkVariant { inherit system; sealed = true; smoke = true; };

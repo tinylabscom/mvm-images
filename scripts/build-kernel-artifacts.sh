@@ -14,10 +14,13 @@ esac
 
 system="${arch}-linux"
 mkdir -p staging
-for variant in builder workload; do
-  store=$(nix build \
-    ".#legacyPackages.${system}.builder-vm.${variant}-kernel" \
-    --impure --no-link --print-out-paths | head -1)
+for variant in builder workload rootless; do
+  if [[ "$variant" == rootless ]]; then
+    ref="./kernel#packages.${system}.rootless-vmlinux"
+  else
+    ref=".#legacyPackages.${system}.builder-vm.${variant}-kernel"
+  fi
+  store=$(nix build "$ref" --impure --no-link --print-out-paths | head -1)
   if [[ -f "$store/Image" ]]; then
     src="$store/Image"
   elif [[ -f "$store/bzImage" ]]; then
@@ -28,26 +31,32 @@ for variant in builder workload; do
     exit 1
   fi
   cp "$src" "staging/vmlinux-${arch}-${variant}"
+  if [[ "$variant" == workload ]]; then
+    workload_store="$store"
+  fi
 done
 
-for variant in builder workload; do
+for variant in builder workload rootless; do
   if [[ "$variant" == builder ]]; then
-    config_attr="kernel-configfile"
+    config_ref=".#legacyPackages.${system}.builder-vm.kernel-configfile"
+  elif [[ "$variant" == rootless ]]; then
+    config_ref="./kernel#packages.${system}.rootless-configfile"
   else
-    config_attr="workload-kernel-configfile"
+    config_ref=".#legacyPackages.${system}.builder-vm.workload-kernel-configfile"
   fi
-  config=$(nix build \
-    ".#legacyPackages.${system}.builder-vm.${config_attr}" \
-    --impure --no-link --print-out-paths | head -1)
+  config=$(nix build "$config_ref" --impure --no-link --print-out-paths | head -1)
   cp "$config" "staging/${variant}-config-${arch}"
 done
 
 scripts/check_no_network_devices.py \
   --kernel-config "staging/builder-config-${arch}" \
-  --kernel-config "staging/workload-config-${arch}"
+  --kernel-config "staging/workload-config-${arch}" \
+  --kernel-config "staging/rootless-config-${arch}"
+scripts/check_rootless_tenant.py \
+  --kernel-config "staging/rootless-config-${arch}"
 
 config="staging/workload-config-${arch}"
-kernel_version=$(basename "$store" | sed -E 's/^linux-//')
+kernel_version=$(basename "$workload_store" | sed -E 's/^linux-//')
 config_hash=$(sha256sum "$config" | cut -d' ' -f1)
 artifact_hash=$(sha256sum "staging/vmlinux-${arch}-workload" | cut -d' ' -f1)
 printf '{"kernel_version":"%s","config_hash":"%s","artifact_hash":"%s"}\n' \
@@ -68,6 +77,14 @@ gzip_bytes=$(gzip -c "staging/vmlinux-${arch}-workload" | wc -c)
 printf '{"arch":"%s","y_symbol_count":%d,"vmlinux_bytes":%d,"vmlinux_gz_bytes":%d}\n' \
   "$arch" "$symbol_count" "$raw_bytes" "$gzip_bytes" \
   > "staging/kernel-metrics-${arch}.json"
+
+rootless_config="staging/rootless-config-${arch}"
+rootless_symbols=$(grep -c '=y$' "$rootless_config")
+rootless_raw=$(stat -c%s "staging/vmlinux-${arch}-rootless")
+rootless_gzip=$(gzip -c "staging/vmlinux-${arch}-rootless" | wc -c)
+printf '{"arch":"%s","y_symbol_count":%d,"vmlinux_bytes":%d,"vmlinux_gz_bytes":%d}\n' \
+  "$arch" "$rootless_symbols" "$rootless_raw" "$rootless_gzip" \
+  > "staging/rootless-kernel-metrics-${arch}.json"
 
 (
   cd staging

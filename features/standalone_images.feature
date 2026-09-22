@@ -16,6 +16,11 @@ Feature: Standalone image verification
     When I inspect the standalone E2E plans
     Then the contract passes
 
+  Scenario: The rootless tenant is generic and remains vsock-only
+    Given the mvm-images source tree
+    When I inspect the rootless tenant contract
+    Then the contract passes
+
   Scenario: Test entry points do not launch mvm
     Given the mvm-images source tree
     When I inspect the standalone test entry points

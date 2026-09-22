@@ -76,6 +76,7 @@
 
       builderVm = image ./images/builder-vm/image.nix { inherit nixpkgs microvm; };
       defaultTenant = image ./images/default-tenant/image.nix { inherit nixpkgs microvm; };
+      rootlessTenant = image ./images/rootless-tenant/image.nix { inherit nixpkgs microvm; };
       runtimeOverlay = image ./images/runtime-overlay/image.nix { inherit nixpkgs; };
       initramfs = image ./images/initramfs/image.nix { nixpkgs = nixpkgs-initramfs; };
 
@@ -103,6 +104,7 @@
       legacyPackages = nixpkgs.lib.genAttrs systems (system: {
         builder-vm = builderVm.packages.${system};
         default-tenant = defaultTenant.packages.${system};
+        rootless-tenant = rootlessTenant.packages.${system};
         runtime-overlay = runtimeOverlay.packages.${system};
         initramfs = initramfs.packages.${system};
         qemu-wasm = qemuWasmFor system;

@@ -1,15 +1,21 @@
 --- a/nix/images/kernel/flake.nix
 +++ b/kernel/flake.nix
-@@ -33,5 +32,0 @@
+@@ -33,5 +33 @@
 -          # In-guest orchestrator variant (Kubernetes guests): same verity
 -          # delta + cgroup/namespace/netfilter plumbing. Deliberately outside
 -          # the tiny-kernel budget ratchet; measure, don't ratchet, until the
 -          # variant's cost is understood.
 -          workloadK8s = import ./workload-k8s.nix { inherit pkgs base; };
-@@ -132 +126,0 @@
++          rootless = import ./rootless.nix { inherit pkgs base; };
+@@ -64,0 +61 @@
++              ln -s ${rootless.passthru.configfile} $out/rootless.config
+@@ -132 +129 @@
 -          workload-k8s-vmlinux = workloadK8s;
-@@ -135 +128,0 @@
++          rootless-vmlinux = rootless;
+@@ -135 +132 @@
 -          workload-k8s-configfile = workloadK8s.passthru.configfile;
-@@ -140,2 +132,0 @@
++          rootless-configfile = rootless.passthru.configfile;
+@@ -140,2 +137 @@
 -          workload-k8s-metrics =
 -            metricsFor "workload-k8s" workloadK8s workloadK8s.passthru.configfile;
++          rootless-metrics = metricsFor "rootless" rootless rootless.passthru.configfile;

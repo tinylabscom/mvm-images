@@ -107,6 +107,15 @@ Every change is one of these, and nothing else.
    its smoke guest configures loopback only, and its launch plan contains no
    network device. These intentional differences implement this repository's
    permanent vsock-only contract and are exercised by the local BDD/E2E gates.
+10. **The generic rootless posture is authored here.**
+    `images/rootless-tenant/image.nix` and `kernel/rootless.nix` are new
+    mvm-images sources, not copies of the rejected Kubernetes-specific image.
+    The shared workload recipe accepts a rootless posture which adds only
+    workload-neutral namespace, cgroup, PTY and filesystem facilities. The
+    rootfs adds `crun` and `fuse-overlayfs`; the direct-VMM smoke variant proves
+    those facilities as uid 1000 while proving loopback-only, vsock-mediated
+    networking. `default-tenant` remains byte-for-byte equivalent to the
+    pinned transitional producer.
 
 ## Deliberately not copied
 

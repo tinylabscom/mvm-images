@@ -106,6 +106,8 @@ def check_e2e_harness_contract() -> None:
         kernel=Path("/artifacts/kernel.img"),
         rootfs=Path("/artifacts/rootfs.bin"),
         guest_cid=7,
+        accel="tcg",
+        rootfs_type="ext4",
     )
     e2e_boot.assert_no_network_devices(qemu)
     if "-nodefaults" not in qemu:
@@ -118,6 +120,7 @@ def check_e2e_harness_contract() -> None:
         rootfs=Path("/artifacts/rootfs.bin"),
         vsock_path=Path("/run/mvm-images-e2e.vsock"),
         guest_cid=7,
+        rootfs_type="ext4",
     )
     e2e_boot.assert_no_network_devices(firecracker)
     if "vsock" not in firecracker:

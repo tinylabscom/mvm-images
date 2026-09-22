@@ -22,6 +22,21 @@ class E2EBootPlanTests(unittest.TestCase):
         self.assertTrue(any("vhost-vsock" in arg for arg in command))
         e2e_boot.assert_no_network_devices(command)
 
+    def test_qemu_tcg_plan_keeps_explicit_vsock_and_uses_emulated_cpu(self):
+        command = e2e_boot.qemu_command(
+            binary="qemu-system-x86_64",
+            kernel=Path("kernel.img"),
+            rootfs=Path("rootfs.ext4"),
+            guest_cid=9,
+            accel="tcg",
+            rootfs_type="ext4",
+        )
+        self.assertIn("q35,accel=tcg", command)
+        self.assertIn("max", command)
+        self.assertTrue(any("rootfstype=ext4" in arg for arg in command))
+        self.assertTrue(any("vhost-vsock" in arg for arg in command))
+        e2e_boot.assert_no_network_devices(command)
+
     def test_firecracker_plan_has_vsock_and_no_network_interfaces(self):
         config = e2e_boot.firecracker_config(
             kernel=Path("vmlinux"),
