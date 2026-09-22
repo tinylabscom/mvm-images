@@ -5,3 +5,4 @@ result-*
 *.tar.gz
 __pycache__/
 .worktrees/
+specs/scratch.md
