@@ -137,6 +137,14 @@
 
       mvmExitReportFor = system: mvm.packages.${system}.mvm-exit-report;
 
+      # Guest GPU shims (libcuda.so.1 / libcudart.so / libnvidia-ml.so.1) —
+      # the drop-in CUDA/NVML ABI the guest activation exposes to a workload's
+      # loader only when the launch armed the GPU plane (mvm.gpu=1). One
+      # derivation per libc, staged at gpu/<libc>/ below.
+      mvmGpuShimsForLibc =
+        system: libc:
+        mvm.packages.${system}."mvm-gpu-shims-${libc}";
+
       # libmvm_host_services.so — the in-guest host-services FFI shared object
       # the language SDKs dlopen, parameterized by the libc it is built
       # against. A guest can only dlopen the variant matching its own, and the
@@ -197,18 +205,14 @@
           };
         });
 
-      # Target overlay size: 16 MiB — a hard cap for the static-musl
-      # runtime overlay. The SDK glibc closure lives in the separate
-      # sidecar, so the production overlay no longer needs the old
-      # 32 MiB allocation. When the mediated ping binary joined the
-      # staged set the image briefly stopped fitting — the recovered
-      # space came from dropping the ext4 journal (a full 1 MiB at this
-      # image size), which a read-only dm-verity-sealed disk can never
-      # replay anyway. Growing the allocation instead would blow the
-      # `xtask perf footprint` guest-artifact budget: this file is
-      # preallocated, so every byte of slack here is counted against
-      # the 50 MB ceiling.
-      overlaySizeBytes = 16 * 1024 * 1024;
+      # Target overlay size: 24 MiB — a hard cap for the static-musl
+      # runtime overlay plus the two GPU shim sets (glibc and musl,
+      # three cdylibs each). The SDK glibc closure lives in the separate
+      # sidecar, so the overlay still stays below the old 32 MiB allocation.
+      # The read-only dm-verity-sealed disk carries no ext4 journal; the build
+      # echoes the staged size so this allocation can be tightened when the
+      # shim sets shrink.
+      overlaySizeBytes = 24 * 1024 * 1024;
 
       mkSdkSidecar =
         system:
@@ -346,6 +350,8 @@
           egressClient = mvmEgressClientFor system;
           addonDns = mvmAddonDnsFor system;
           exitReport = mvmExitReportFor system;
+          gpuShimsGlibc = mvmGpuShimsForLibc system "glibc";
+          gpuShimsMusl = mvmGpuShimsForLibc system "musl";
         in
         pkgs.runCommand "mvm-runtime-overlay-${system}"
           {
@@ -364,6 +370,7 @@
                 ;
               sdkSidecar = mkSdkSidecar system;
               sdkSidecarImage = mkSdkSidecarImage system;
+              inherit gpuShimsGlibc gpuShimsMusl;
               version = overlayVersion;
               dataBlockSize = overlayBlockSize;
               verityHashAlgorithm = overlayVerityHashAlgorithm;
@@ -390,6 +397,17 @@
             cp ${egressClient}/bin/mvm-egress-client "$staging/egress-client"
             cp ${addonDns}/bin/mvm-addon-dns "$staging/addon-dns"
             cp ${exitReport}/bin/mvm-exit-report "$staging/exit-report"
+
+            # Guest GPU shims, one set per libc. Kept off the guest's default
+            # loader path on purpose: the guest activation prepends
+            # /mvm/runtime/gpu/<libc> to LD_LIBRARY_PATH only when the boot's
+            # cmdline carries mvm.gpu=1, so an ordinary guest whose workload
+            # opportunistically dlopen("libcuda.so.1") never picks the shim up
+            # and never dials a GPU endpoint that does not exist.
+            mkdir -p "$staging/gpu/glibc" "$staging/gpu/musl"
+            cp ${gpuShimsGlibc}/lib/. "$staging/gpu/glibc/"
+            cp ${gpuShimsMusl}/lib/. "$staging/gpu/musl/"
+            chmod 0555 "$staging/gpu/glibc"/* "$staging/gpu/musl"/*
 
             # In-guest Python runtime SDK. PYTHONPATH points at
             # /mvm/runtime/sdk-py (see mk-guest.nix), so the `mvm` package
