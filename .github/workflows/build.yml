@@ -318,6 +318,103 @@ jobs:
             staging/default-microvm-${{ matrix.arch }}.sbom.txt
             staging/default-microvm-${{ matrix.arch }}-checksums-sha256.txt
 
+  rootless-microvm:
+    needs: source-drift
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Build sealed rootless tenant
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.rootless-tenant.default" \
+            --impure --no-link --print-out-paths | head -1)
+          echo "STORE_PATH=${STORE_PATH}" >> "$GITHUB_ENV"
+          mkdir -p staging
+          cp -L "$STORE_PATH/vmlinux"         "staging/rootless-microvm-vmlinux-${ARCH}"
+          cp -L "$STORE_PATH/kernel.img"      "staging/rootless-microvm-qemu-kernel-${ARCH}"
+          cp -L "$STORE_PATH/rootfs.ext4"     "staging/rootless-microvm-rootfs-${ARCH}.ext4"
+          cp -L "$STORE_PATH/rootfs.verity"   "staging/rootless-microvm-rootfs-${ARCH}.verity"
+          cp -L "$STORE_PATH/rootfs.roothash" "staging/rootless-microvm-rootfs-${ARCH}.roothash"
+          cp -L "$STORE_PATH/mvm-meta.json"   "staging/rootless-microvm-meta-${ARCH}.json"
+      - name: Assert the rootless image is loadable
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          . scripts/mvm-source.sh
+          MVM_SRC=$(mvm_source_dir)
+          command -v debugfs >/dev/null 2>&1 \
+            || { sudo apt-get update && sudo apt-get install -y e2fsprogs; }
+          bash "$MVM_SRC/nix/packaging/release/assert-init-shebang.sh" \
+            "staging/rootless-microvm-rootfs-${ARCH}.ext4" "rootless ${ARCH}"
+          bash "$MVM_SRC/nix/packaging/release/assert-kernel-format.sh" \
+            "staging/rootless-microvm-vmlinux-${ARCH}" "${ARCH}" "rootless ${ARCH} kernel"
+          bash packaging/assert-sidecar-coherent.sh \
+            "staging/rootless-microvm-meta-${ARCH}.json" "rootless ${ARCH} sidecar"
+      - name: Boot the rootless capability probe directly in QEMU
+        if: ${{ matrix.arch == 'x86_64' }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86
+          sudo modprobe vhost_vsock
+          sudo chmod a+rw /dev/vhost-vsock
+          SYSTEM="${ARCH}-linux"
+          SMOKE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.rootless-tenant.smoke" \
+            --impure --no-link --print-out-paths | head -1)
+          RUNTIME_PATH=$(nix build ".#legacyPackages.${SYSTEM}.runtime-overlay.default" \
+            --impure --no-link --print-out-paths | head -1)
+          ./scripts/e2e_boot.py qemu "$SMOKE_PATH" \
+            --accel tcg --rootfs-name rootfs.ext4 --rootfs-type ext4 \
+            --runtime-overlay "$RUNTIME_PATH/overlay.ext4" \
+            --ready-marker MVM-ROOTLESS-READY --timeout 180
+      - name: Generate rootless tenant SBOM and checksums
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix-store --query --requisites "$STORE_PATH" > "staging/rootless-microvm-${ARCH}.sbom.txt"
+          cd staging
+          sha256sum \
+            "rootless-microvm-vmlinux-${ARCH}" \
+            "rootless-microvm-qemu-kernel-${ARCH}" \
+            "rootless-microvm-rootfs-${ARCH}.ext4" \
+            "rootless-microvm-rootfs-${ARCH}.verity" \
+            "rootless-microvm-rootfs-${ARCH}.roothash" \
+            "rootless-microvm-meta-${ARCH}.json" \
+            > "rootless-microvm-${ARCH}-checksums-sha256.txt"
+      - name: Upload rootless tenant image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rootless-microvm-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/rootless-microvm-vmlinux-${{ matrix.arch }}
+            staging/rootless-microvm-qemu-kernel-${{ matrix.arch }}
+            staging/rootless-microvm-rootfs-${{ matrix.arch }}.ext4
+            staging/rootless-microvm-rootfs-${{ matrix.arch }}.verity
+            staging/rootless-microvm-rootfs-${{ matrix.arch }}.roothash
+            staging/rootless-microvm-meta-${{ matrix.arch }}.json
+            staging/rootless-microvm-${{ matrix.arch }}.sbom.txt
+            staging/rootless-microvm-${{ matrix.arch }}-checksums-sha256.txt
+
   initramfs:
     needs: source-drift
     strategy:
@@ -393,11 +490,14 @@ jobs:
           path: |
             staging/vmlinux-${{ matrix.arch }}-builder
             staging/vmlinux-${{ matrix.arch }}-workload
+            staging/vmlinux-${{ matrix.arch }}-rootless
             staging/kernel-${{ matrix.arch }}-checksums-sha256.txt
             staging/kernel-${{ matrix.arch }}.json
             staging/kernel-metrics-${{ matrix.arch }}.json
+            staging/rootless-kernel-metrics-${{ matrix.arch }}.json
             staging/builder-config-${{ matrix.arch }}
             staging/workload-config-${{ matrix.arch }}
+            staging/rootless-config-${{ matrix.arch }}
 
   # x86_64 only, as in mvm: the pack is a browser runtime for an x86_64 guest.
   qemu-wasm-site-pack:

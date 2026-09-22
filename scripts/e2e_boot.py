@@ -21,11 +21,6 @@ from typing import Any
 
 
 READY_MARKER = "QEMU-WASM-SMOKE-READY"
-QEMU_CMDLINE = (
-    "console=ttyS0 root=/dev/vda rw rootfstype=ext2 rootwait "
-    "panic=1 init=/init loglevel=4"
-)
-FIRECRACKER_CMDLINE = QEMU_CMDLINE + " reboot=k pci=off"
 FORBIDDEN_PLAN_TOKENS = (
     "virtio-net",
     "e1000",
@@ -46,8 +41,26 @@ class E2EError(RuntimeError):
 
 
 def qemu_command(
-    *, binary: str, kernel: Path, rootfs: Path, guest_cid: int
+    *,
+    binary: str,
+    kernel: Path,
+    rootfs: Path,
+    guest_cid: int,
+    accel: str = "kvm",
+    rootfs_type: str = "ext2",
+    runtime_overlay: Path | None = None,
 ) -> list[str]:
+    if accel not in ("kvm", "tcg"):
+        raise E2EError(f"unsupported QEMU accelerator: {accel}")
+    runtime_cmdline = (
+        " mvm.runtime_data=/dev/vdb mvm.runtime_source_policy=required_overlay"
+        if runtime_overlay is not None
+        else ""
+    )
+    cmdline = (
+        f"console=ttyS0 root=/dev/vda rw rootfstype={rootfs_type} rootwait "
+        f"panic=1 init=/init loglevel=4{runtime_cmdline}"
+    )
     command = [
         binary,
         "-nodefaults",
@@ -60,33 +73,56 @@ def qemu_command(
         "-serial",
         "stdio",
         "-machine",
-        "q35,accel=kvm",
+        f"q35,accel={accel}",
         "-cpu",
-        "host",
+        "host" if accel == "kvm" else "max",
         "-m",
         "256M",
         "-kernel",
         str(kernel),
         "-append",
-        QEMU_CMDLINE,
+        cmdline,
         "-drive",
         f"id=rootfs,file={rootfs},format=raw,if=none,readonly=off",
         "-device",
         "virtio-blk-pci,drive=rootfs",
-        "-device",
-        f"vhost-vsock-pci,guest-cid={guest_cid}",
     ]
+    if runtime_overlay is not None:
+        command.extend(
+            [
+                "-drive",
+                f"id=runtime,file={runtime_overlay},format=raw,if=none,readonly=on",
+                "-device",
+                "virtio-blk-pci,drive=runtime",
+            ]
+        )
+    command.extend(["-device", f"vhost-vsock-pci,guest-cid={guest_cid}"])
     assert_no_network_devices(command)
     return command
 
 
 def firecracker_config(
-    *, kernel: Path, rootfs: Path, vsock_path: Path, guest_cid: int
+    *,
+    kernel: Path,
+    rootfs: Path,
+    vsock_path: Path,
+    guest_cid: int,
+    rootfs_type: str = "ext2",
+    runtime_overlay: Path | None = None,
 ) -> dict[str, Any]:
+    runtime_cmdline = (
+        " mvm.runtime_data=/dev/vdb mvm.runtime_source_policy=required_overlay"
+        if runtime_overlay is not None
+        else ""
+    )
+    cmdline = (
+        f"console=ttyS0 root=/dev/vda rw rootfstype={rootfs_type} rootwait "
+        f"panic=1 init=/init loglevel=4 reboot=k pci=off{runtime_cmdline}"
+    )
     config: dict[str, Any] = {
         "boot-source": {
             "kernel_image_path": str(kernel),
-            "boot_args": FIRECRACKER_CMDLINE,
+            "boot_args": cmdline,
         },
         "drives": [
             {
@@ -102,6 +138,15 @@ def firecracker_config(
             "uds_path": str(vsock_path),
         },
     }
+    if runtime_overlay is not None:
+        config["drives"].append(
+            {
+                "drive_id": "runtime",
+                "path_on_host": str(runtime_overlay),
+                "is_root_device": False,
+                "is_read_only": True,
+            }
+        )
     assert_no_network_devices(config)
     return config
 
@@ -129,7 +174,7 @@ def _require_binary(binary: str) -> str:
     return found
 
 
-def run_until_ready(command: list[str], timeout: float) -> None:
+def run_until_ready(command: list[str], timeout: float, ready_marker: str) -> None:
     assert_no_network_devices(command)
     process = subprocess.Popen(
         command,
@@ -152,16 +197,16 @@ def run_until_ready(command: list[str], timeout: float) -> None:
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 captured.append(line)
-                if READY_MARKER in line:
+                if ready_marker in line:
                     return
             status = process.poll()
             if status is not None:
                 raise E2EError(
-                    f"VMM exited {status} before {READY_MARKER!r}\n"
+                    f"VMM exited {status} before {ready_marker!r}\n"
                     + "".join(captured[-80:])
                 )
         raise E2EError(
-            f"timed out after {timeout:.0f}s waiting for {READY_MARKER!r}\n"
+            f"timed out after {timeout:.0f}s waiting for {ready_marker!r}\n"
             + "".join(captured[-80:])
         )
     finally:
@@ -176,19 +221,24 @@ def run_until_ready(command: list[str], timeout: float) -> None:
 
 def _plan(args: argparse.Namespace) -> Any:
     kernel = args.artifacts / ("kernel.img" if args.backend == "qemu" else "vmlinux")
-    rootfs = args.artifacts / "rootfs.bin"
+    rootfs = args.artifacts / args.rootfs_name
     if args.backend == "qemu":
         return qemu_command(
             binary=args.binary or "qemu-system-x86_64",
             kernel=kernel,
             rootfs=rootfs,
             guest_cid=args.guest_cid,
+            accel=args.accel,
+            rootfs_type=args.rootfs_type,
+            runtime_overlay=args.runtime_overlay,
         )
     return firecracker_config(
         kernel=kernel,
         rootfs=rootfs,
         vsock_path=Path("/tmp/mvm-images-e2e.vsock"),
         guest_cid=args.guest_cid,
+        rootfs_type=args.rootfs_type,
+        runtime_overlay=args.runtime_overlay,
     )
 
 
@@ -196,11 +246,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("backend", choices=("qemu", "firecracker"))
     parser.add_argument(
-        "artifacts", type=Path, help="directory with kernel.img, vmlinux and rootfs.bin"
+        "artifacts", type=Path, help="directory with kernel.img, vmlinux and a rootfs image"
     )
     parser.add_argument("--binary", help="VMM executable (defaults by backend)")
     parser.add_argument("--guest-cid", type=int, default=7)
     parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--accel", choices=("kvm", "tcg"), default="kvm")
+    parser.add_argument("--rootfs-type", choices=("ext2", "ext4"), default="ext2")
+    parser.add_argument("--rootfs-name", default="rootfs.bin")
+    parser.add_argument(
+        "--runtime-overlay",
+        type=Path,
+        help="read-only runtime overlay attached as the second block device",
+    )
+    parser.add_argument("--ready-marker", default=READY_MARKER)
     parser.add_argument("--plan", action="store_true", help="print the VMM plan without booting")
     args = parser.parse_args()
 
@@ -212,7 +271,12 @@ def main() -> int:
 
         kernel_name = "kernel.img" if args.backend == "qemu" else "vmlinux"
         kernel = _require_file(args.artifacts / kernel_name, "kernel")
-        rootfs = _require_file(args.artifacts / "rootfs.bin", "rootfs")
+        rootfs = _require_file(args.artifacts / args.rootfs_name, "rootfs")
+        runtime_overlay = (
+            _require_file(args.runtime_overlay, "runtime overlay")
+            if args.runtime_overlay is not None
+            else None
+        )
         with tempfile.TemporaryDirectory(prefix="mvm-images-e2e-") as temp:
             temp_path = Path(temp)
             writable_rootfs = temp_path / "rootfs.bin"
@@ -225,8 +289,11 @@ def main() -> int:
                     kernel=kernel,
                     rootfs=writable_rootfs,
                     guest_cid=args.guest_cid,
+                    accel=args.accel,
+                    rootfs_type=args.rootfs_type,
+                    runtime_overlay=runtime_overlay,
                 )
-                run_until_ready(command, args.timeout)
+                run_until_ready(command, args.timeout, args.ready_marker)
             else:
                 binary = _require_binary(args.binary or "firecracker")
                 config = firecracker_config(
@@ -234,18 +301,21 @@ def main() -> int:
                     rootfs=writable_rootfs,
                     vsock_path=temp_path / "vsock.sock",
                     guest_cid=args.guest_cid,
+                    rootfs_type=args.rootfs_type,
+                    runtime_overlay=runtime_overlay,
                 )
                 config_path = temp_path / "config.json"
                 config_path.write_text(json.dumps(config), encoding="utf-8")
                 run_until_ready(
                     [binary, "--no-api", "--config-file", str(config_path)],
                     args.timeout,
+                    args.ready_marker,
                 )
     except (E2EError, OSError) as exc:
         print(f"e2e boot failed: {exc}", file=sys.stderr)
         return 1
 
-    print(f"{args.backend}: reached {READY_MARKER}")
+    print(f"{args.backend}: reached {args.ready_marker}")
     return 0
 
 

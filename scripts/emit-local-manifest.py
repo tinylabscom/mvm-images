@@ -78,6 +78,7 @@ IMAGES_MARKERS = (
     "kernel/flake.nix",
     "images/builder-vm/image.nix",
     "images/default-tenant/image.nix",
+    "images/rootless-tenant/image.nix",
     "images/runtime-overlay/image.nix",
     "images/initramfs/image.nix",
 )

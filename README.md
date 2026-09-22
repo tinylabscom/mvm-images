@@ -18,9 +18,9 @@ anything.
 kernels, root filesystems, runtime overlays, initramfs images, builder images
 and bootstrap inputs. `mvm` consumes released image sets through its
 digest-pinned image lock; it does not own a second canonical image definition
-or publication path. During the extraction there are temporary source mirrors
-and same-commit reproduction checks, but the steady-state dependency is one
-way:
+or publication path. During the extraction there are temporary source mirrors,
+but image reproducibility is checked entirely against the canonical
+definitions here. The dependency is one way:
 
 ```text
 mvm source revision ──► mvm-images builds and publishes an image set
@@ -69,6 +69,14 @@ silently widening the kernel and attack surface of ordinary single-process
 workloads. A consumer that assumes CNI, pod bridges, veth pairs, NodePort or a
 guest-side NAT is incompatible with `mvm`; it must use loopback adapters and
 the admitted vsock path instead.
+
+The rootless image ships the workload-neutral userspace floor: `crun` and
+`fuse-overlayfs`, alongside the existing BusyBox init/runtime surface. Its
+kernel adds user, mount, PID, IPC and UTS namespaces, unified cgroup v2
+controllers and delegation, PTYs, overlay/FUSE storage and filesystem event
+notification. It deliberately omits `CONFIG_NET_NS` as well as every network
+device. Consumers use an attached writable volume for container state and the
+same loopback-plus-FlowMux path as `default-tenant` for all external traffic.
 
 ## What this repository will own
 
@@ -140,9 +148,10 @@ flake.nix, flake.lock   the one flake: every image, one mvm pin
 images/
   builder-vm/image.nix       builder VM kernel + rootfs, Stage 0 rootfs, kernel attrs
   default-tenant/image.nix   default workload microVM (verity-sealed prod, dev)
+  rootless-tenant/image.nix  generic rootless OCI base (verity-sealed prod, smoke)
   runtime-overlay/image.nix  runtime overlay and the glibc/musl SDK sidecars
   initramfs/image.nix        universal initramfs
-kernel/                 builder and workload kernel configs; also a standalone flake
+kernel/                 builder, workload and rootless kernel configs; standalone flake
 qemu-wasm/              QEMU/WebAssembly engine, smoke image and browser pack
 packaging/              static checks run on staged artifacts
 scripts/                kernel, host-binary, QEMU-wasm and drift tooling
@@ -155,6 +164,7 @@ attribute names `mvm` used, so `mvm`'s `nix/images/<role>#packages.<system>.<att
 is `.#legacyPackages.<system>.<role>.<attr>` here — for example
 `.#legacyPackages.x86_64-linux.builder-vm.default` or
 `.#legacyPackages.aarch64-linux.runtime-overlay.sdk-sidecar-image-musl`. The
+rootless base is `.#legacyPackages.<system>.rootless-tenant.default`. The
 QEMU/WebAssembly outputs are under `qemu-wasm`. The kernel needs nothing from
 `mvm`, so `kernel/` stays a flake of its own (`nix build ./kernel#workload-vmlinux`).
 
@@ -190,7 +200,9 @@ remote builder):
 nix build .#legacyPackages.x86_64-linux.runtime-overlay.default
 nix build .#legacyPackages.x86_64-linux.initramfs.default
 nix build .#legacyPackages.x86_64-linux.default-tenant.default --impure
+nix build .#legacyPackages.x86_64-linux.rootless-tenant.default --impure
 nix build ./kernel#workload-vmlinux
+nix build ./kernel#rootless-vmlinux
 ```
 
 The builder VM also needs three static host binaries built outside Nix. Build
@@ -209,8 +221,9 @@ refuses, fetch anonymously with `NIX_CONFIG='access-tokens ='`.
 
 CI builds every image on both architectures on pull requests that touch the
 image sources (`.github/workflows/build.yml`) and keeps the results as workflow
-artifacts. It never releases or signs. The QEMU/WebAssembly job also boots its
-pack directly in headless Chromium and waits for the guest readiness marker.
+artifacts. It never releases or signs. The QEMU/WebAssembly job boots its pack
+directly in headless Chromium. The x86 rootless job directly boots the actual
+rootless smoke variant in QEMU and waits for its capability witness.
 
 ### Tests
 
@@ -224,6 +237,9 @@ just e2e-plan /path/to/artifacts # inspect QEMU + Firecracker plans
 just e2e-qemu /path/to/artifacts
 just e2e-firecracker /path/to/artifacts
 just e2e-qemu-wasm /path/to/pack /path/to/chromium
+just e2e-rootless-plan /path/to/rootless-smoke /path/to/runtime-overlay.ext4
+just e2e-rootless-qemu /path/to/rootless-smoke /path/to/runtime-overlay.ext4
+just e2e-rootless-firecracker /path/to/rootless-smoke /path/to/runtime-overlay.ext4
 ```
 
 The native boot commands take the output of
@@ -234,25 +250,37 @@ containing the QEMU `kernel.img`, Firecracker `vmlinux`, and shared
 block/serial/vsock device list. Firecracker receives the ELF kernel and a
 generated configuration with block and vsock devices and no
 `network-interfaces` section. The harness copies the rootfs out of the
-immutable Nix store before mounting it read/write. Missing VMM support or
-`/dev/kvm` is a hard failure, not a silent skip.
+immutable Nix store before mounting it read/write. Missing support for the
+requested VMM/accelerator is a hard failure, not a silent skip; QEMU uses KVM
+by default and accepts explicit `--accel tcg` for hardware-independent probes.
+
+The rootless commands take the `rootless-tenant.smoke` output plus the canonical
+`runtime-overlay.default` `overlay.ext4`, attach that overlay read-only as a
+second block device, and wait for `MVM-ROOTLESS-READY`. Before emitting it, the
+real sealed guest verifies that
+its entrypoint is uid 1000, user/mount/PID namespaces work, its delegated
+cgroup v2 subtree is writable, `crun` and `fuse-overlayfs` execute,
+`/dev/net/tun` does not exist, and loopback is the only interface. QEMU and
+Firecracker still receive explicit block/serial/vsock-only plans; the overlay
+is a block device, and no `mvm` process or network device participates.
 
 `features/standalone_images.feature` holds the human-readable BDD contract.
 `scripts/check_no_network_devices.py` checks kernel, browser, and direct-VMM
 definitions for forbidden network devices. Both architecture jobs also feed
-the resolved builder and workload `.config` files to that checker, proving
+the resolved builder, workload and rootless `.config` files to that checker, proving
 Kconfig did not restore a built-in or modular network device. The fast suite
 runs on every pull request; the browser boot is the hardware-independent E2E
 lane, while native QEMU and Firecracker commands are for KVM-capable runners.
 
-`.github/workflows/reproduce.yml` (`scripts/compare-same-commit.sh`) builds the
-builder VM and the default microVM a second way on the same runner: from
-`mvm`'s own in-tree image flakes at the pinned commit. It fails if the
-derivations or output files differ, or if a `--rebuild` of the final derivation
-is not bit-identical. The pinned mvm commit writes every filesystem and verity
-superblock from fixed seeds and UUIDs
+`.github/workflows/reproduce.yml` (`scripts/check-reproducible.sh`) rebuilds
+the canonical `builder-vm`, `default-tenant`, and `rootless-tenant` roles on
+both architectures. Nix rebuilds each final derivation instead of accepting
+its registered output and fails if the bytes differ. The pinned inputs write
+every filesystem and verity superblock from fixed seeds and UUIDs
 ([tinylabscom/mvm#3499](https://github.com/tinylabscom/mvm/issues/3499)), so a
 second build of the same derivation gives the same bytes.
+The lane never invokes `mvm` or compares against its retired in-tree image
+recipes; those recipes are not a second source of truth.
 
 ### Advancing the mvm pin
 

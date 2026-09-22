@@ -28,6 +28,7 @@ list:
     @echo '                   kernel-configfile, workload-kernel-configfile,'
     @echo '                   sdk-sidecar-image{,-musl}   (needs MVM_HOST_BIN_DIR + --impure)'
     @echo '  default-tenant   default, dev                 (default needs --impure)'
+    @echo '  rootless-tenant  default, prod, dev, smoke    (generic; no NIC)'
     @echo '  runtime-overlay  default,'
     @echo '                   sdk-sidecar-image, sdk-sidecar-image-musl'
     @echo '  initramfs        default'
@@ -98,6 +99,7 @@ release-check:
     scripts/check-source-drift.sh
     scripts/check-local-mvm-override.sh '{{system}}'
     scripts/check_no_network_devices.py
+    scripts/check_rootless_tenant.py
     python3 -m unittest discover -s scripts/tests -v
     scripts/run-bdd.py
 
@@ -105,6 +107,7 @@ release-check:
 test:
     python3 -m unittest discover -s scripts/tests -v
     scripts/check_no_network_devices.py
+    scripts/check_rootless_tenant.py
 
 bdd:
     scripts/run-bdd.py
@@ -123,16 +126,27 @@ e2e-qemu artifacts binary="qemu-system-x86_64":
 e2e-firecracker artifacts binary="firecracker":
     scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}'
 
+# Boot the actual rootless tenant smoke variant. It checks uid 1000, user/mount/
+# PID namespaces, delegated cgroup v2, crun + fuse-overlayfs, and loopback-only
+# networking before emitting MVM-ROOTLESS-READY.
+e2e-rootless-plan artifacts="result" runtime_overlay="result/runtime-overlay.ext4":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY --plan
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY --plan
+
+e2e-rootless-qemu artifacts="result" runtime_overlay="result/runtime-overlay.ext4" binary="qemu-system-x86_64" accel="kvm":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --binary '{{binary}}' --accel '{{accel}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY
+
+e2e-rootless-firecracker artifacts="result" runtime_overlay="result/runtime-overlay.ext4" binary="firecracker":
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY
+
 # Boot the browser pack directly under headless Chromium.
 e2e-qemu-wasm pack chrome:
     scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'
 
-# Compare this repository's build with mvm's in-tree build of the same role at
-# the pinned commit — the reproduce.yml lane by hand. Needs a checkout of the
-# pinned commit (build-host-binaries.sh leaves one behind) and, for
-# builder-vm, MVM_HOST_BIN_DIR from the same tree.
-compare-same-commit target role mvm_checkout out_dir:
-    scripts/compare-same-commit.sh '{{target}}' '{{role}}' '{{mvm_checkout}}' '{{out_dir}}'
+# Rebuild one canonical role byte-for-byte — the reproduce.yml lane by hand.
+# builder-vm additionally requires MVM_HOST_BIN_DIR, just like its normal build.
+reproduce target role out_dir:
+    scripts/check-reproducible.sh '{{target}}' '{{role}}' '{{out_dir}}'
 
 # Describe a built set in the manifest schema mvm parses, into a new directory
 # (local_checkouts producer, local-dev tier; mvm refuses it once either

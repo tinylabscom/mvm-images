@@ -4,3 +4,4 @@ result-*
 *.ext4
 *.tar.gz
 __pycache__/
+.worktrees/
