@@ -285,10 +285,10 @@
 
             chmod 0644 \
               $out/vmlinux \
-              ${nixpkgs.lib.optionalString rootless "$out/kernel.img \\"}
               $out/rootfs.ext4 \
               $out/rootfs-closure-paths \
               $out/mvm-meta.json
+            ${nixpkgs.lib.optionalString rootless "chmod 0644 $out/kernel.img"}
           ''
           + nixpkgs.lib.optionalString sealed ''
 

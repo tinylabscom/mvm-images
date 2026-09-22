@@ -118,8 +118,8 @@
 +              fi
 +            ''}
 +
-@@ -241,0 +288 @@
-+              ${nixpkgs.lib.optionalString rootless "$out/kernel.img \\"}
+@@ -244,0 +291 @@
++            ${nixpkgs.lib.optionalString rootless "chmod 0644 $out/kernel.img"}
 @@ -274,0 +322,2 @@
 +      } // nixpkgs.lib.optionalAttrs rootless {
 +        smoke = mkVariant { inherit system; sealed = true; smoke = true; };
