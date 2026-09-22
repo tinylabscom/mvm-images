@@ -457,7 +457,7 @@
             # `mvm_build::oci_to_rootfs::ext4::materialize_to_ext4`
             # parameters — same UUID / hash_seed / block size /
             # SOURCE_DATE_EPOCH conventions. Pre-allocate the
-            # output file at the fixed budget (16 MiB) so the size
+            # output file at the fixed budget (24 MiB) so the size
             # is also part of the deterministic shape.
             #
             # `-O ^has_journal,^orphan_file` mirrors the builder VM's

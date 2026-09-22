@@ -8,16 +8,19 @@ diverged from mvm can be told apart from one that was changed on purpose.
 ## The pin
 
 All copies were taken at mvm commit
-`4fae272a063172157d1b3a1b1caa4f65e3368106`. This pin brings the runtime
+`e97eea9ace29d831ee0c755fef758d7e289ca831`. This pin brings the runtime
 overlay to parity with mvm's builders — the mediated `ping` binary joins the
 staged set and the read-only overlay drops its ext4 journal to stay inside
-the 16 MiB budget (tinylabscom/mvm#3527) — and follows mvm's removal of the
+its base budget (tinylabscom/mvm#3527) — and follows mvm's removal of the
 dead qemu-wasm driver scripts (tinylabscom/mvm#3606): their copies and the
 `run-qemu-wasm-smoke-suite.py` rewrite are deleted here rather than kept
-against sources that no longer exist. The previous pin advanced the guest
-program source through the display-plane and image-source-selector work while
-the rewrite ledger deliberately excludes the Kubernetes-specific kernel work
-in that upstream commit. The generic rootless posture belongs here and follows
+against sources that no longer exist. It also exposes the guest GPU shim
+packages (`mvm-gpu-shims-{glibc,musl}`, tinylabscom/mvm#3573), fixes the musl
+shim build to use a dynamic-linking musl stdenv (tinylabscom/mvm#3611), and
+includes the guest activation that arms them
+(`mvm.gpu=1` cmdline token with per-libc LD_LIBRARY_PATH injection,
+tinylabscom/mvm#3590, #3595). The rewrite ledger deliberately excludes the
+Kubernetes-specific kernel work in the upstream history. The generic rootless posture belongs here and follows
 the permanent NIC-less FlowMux/vsock contract in `README.md`; it is not an
 import of `workload-k8s`. The copies were first taken at
 `6717e2451e155672fafc85a1a729094869af8dd8` (W4a of the image-repository
@@ -121,6 +124,15 @@ Every change is one of these, and nothing else.
     uid 1000 while proving loopback-only, vsock-mediated networking. The
     `default-tenant` recipe remains independent and is not widened by the
     rootless capability floor.
+11. **The runtime overlay stages the guest GPU shim sets.**
+    `images/runtime-overlay/image.nix` adds the `mvm-gpu-shims-{glibc,musl}`
+    packages from the pinned mvm source, staged at `gpu/<libc>/` under the
+    mount point, and the overlay budget rises 16 → 24 MiB to hold both sets.
+    The guest activation puts them on the loader path only when the boot arms
+    the GPU plane (`mvm.gpu=1`), so an ordinary guest never picks the shim up
+    and never dials a GPU endpoint that does not exist. mvm's own copy of the
+    recipe does not stage them; composing the shim sets into the overlay is
+    this repository's composition decision (tinylabscom/mvm-images#10).
 
 ## Deliberately not copied
 
