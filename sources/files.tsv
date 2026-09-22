@@ -19,8 +19,5 @@ nix/packages/qemu-wasm-smoke-pack.nix	qemu-wasm/qemu-wasm-smoke-pack.nix
 nix/packages/emscripten-cross.meson	qemu-wasm/emscripten-cross.meson
 nix/packaging/release/assert-sidecar-coherent.sh	packaging/assert-sidecar-coherent.sh
 scripts/build-kernel-artifacts.sh	scripts/build-kernel-artifacts.sh
-scripts/build-qemu-wasm-smoke-pack.sh	scripts/build-qemu-wasm-smoke-pack.sh
-scripts/run-qemu-wasm-demo-chromium.py	scripts/run-qemu-wasm-demo-chromium.py
 scripts/run-qemu-wasm-smoke-chromium.py	scripts/run-qemu-wasm-smoke-chromium.py
-scripts/run-qemu-wasm-smoke-suite.py	scripts/run-qemu-wasm-smoke-suite.py
 scripts/serve-qemu-wasm-smoke-pack.py	scripts/serve-qemu-wasm-smoke-pack.py

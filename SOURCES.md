@@ -8,7 +8,13 @@ diverged from mvm can be told apart from one that was changed on purpose.
 ## The pin
 
 All copies were taken at mvm commit
-`ca3895a4df1df9d51726ae6be0900012ee137a88`. The pin advances the guest
+`4fae272a063172157d1b3a1b1caa4f65e3368106`. This pin brings the runtime
+overlay to parity with mvm's builders — the mediated `ping` binary joins the
+staged set and the read-only overlay drops its ext4 journal to stay inside
+the 16 MiB budget (tinylabscom/mvm#3527) — and follows mvm's removal of the
+dead qemu-wasm driver scripts (tinylabscom/mvm#3606): their copies and the
+`run-qemu-wasm-smoke-suite.py` rewrite are deleted here rather than kept
+against sources that no longer exist. The previous pin advanced the guest
 program source through the display-plane and image-source-selector work while
 the rewrite ledger deliberately excludes the Kubernetes-specific kernel work
 in that upstream commit. The generic rootless posture belongs here and follows
@@ -50,8 +56,7 @@ are intentionally not base-image sources and requires a reason for each one.
 | `nix/packages/emscripten-cross.meson` | `qemu-wasm/emscripten-cross.meson` | no |
 | `nix/packaging/release/assert-sidecar-coherent.sh` | `packaging/assert-sidecar-coherent.sh` | no |
 | `scripts/build-kernel-artifacts.sh` | `scripts/build-kernel-artifacts.sh` | yes |
-| `scripts/build-qemu-wasm-smoke-pack.sh` | `scripts/build-qemu-wasm-smoke-pack.sh` | no |
-| `scripts/run-qemu-wasm-{demo,smoke}-chromium.py`, `run-qemu-wasm-smoke-suite.py` | `scripts/` | no |
+| `scripts/run-qemu-wasm-smoke-chromium.py` | `scripts/` | no |
 | `scripts/serve-qemu-wasm-smoke-pack.py` | `scripts/` | no |
 
 ## Rewrites
@@ -137,11 +142,6 @@ Every change is one of these, and nothing else.
 These are copied as they are so the drift check tracks them; fixing them is
 follow-up work, not part of the move.
 
-- `scripts/build-qemu-wasm-smoke-pack.sh` drives a Lima VM (`limactl`). mvm
-  removed Lima, so the script cannot run in either repository. The pack builds
-  directly with `nix build .#legacyPackages.x86_64-linux.qemu-wasm.qemu-wasm-smoke-pack`.
-- `scripts/run-qemu-wasm-demo-chromium.py` starts
-  `../web/weblinux-demo/serve.py`, which is part of mvm's site and is not here.
 - The builder's host binaries are compiled with the Rust toolchain mvm's
   `rust-toolchain.toml` selects, because that is what the `cargo zigbuild` in
   `release-boot-image.yml` runs. mvm's `build.rs` embeds its copies with the
