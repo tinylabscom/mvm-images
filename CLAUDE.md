@@ -11,6 +11,9 @@ The essential architecture is:
   output bytes against retired in-tree image recipes in `mvm`.
 - Maintain distinct `default-tenant` and generic `rootless-tenant` base-image
   postures for both guest architectures.
+- Keep image-set workload roles profile-qualified. A manifest identifies the
+  default and rootless kernel/rootfs pairs separately for each architecture so
+  a consumer cannot mix the two profiles.
 - `rootless-tenant` supplies reusable rootless-container capabilities while
   preserving verified boot and the normal vsock, storage, egress and admission
   boundaries.

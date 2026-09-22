@@ -188,12 +188,15 @@ class Emit(Fixture):
         overlay = self.artifact("overlay.ext4", b"overlay")
         pack = self.artifact("qemu-wasm-smoke-pack.tar.gz", b"pack")
         manifest = self.emit(
-            ("workload_kernel", "kernel:image", kernel),
+            ("default_tenant_workload_kernel", "kernel:image", kernel),
             ("runtime_overlay", "ext4", overlay),
             ("qemu_wasm_smoke_pack", "tar_gz", pack),
-            capabilities=[("workload_kernel", "virtio_vsock"), ("workload_kernel", "virtio_blk")],
+            capabilities=[
+                ("default_tenant_workload_kernel", "virtio_vsock"),
+                ("default_tenant_workload_kernel", "virtio_blk"),
+            ],
         )
-        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(manifest["set_version"], "0.0.0-local")
         local = manifest["producer"]["local_checkouts"]
         self.assertEqual(set(manifest["producer"]), {"local_checkouts"})
@@ -215,14 +218,16 @@ class Emit(Fixture):
         )
 
         kernel_member, overlay_member, pack_member = manifest["members"]
-        self.assertEqual(kernel_member["role"], "workload_kernel")
+        self.assertEqual(
+            kernel_member["role"], {"workload_kernel": "default_tenant"}
+        )
         self.assertEqual(kernel_member["target"], {"arch": "aarch64"})
         self.assertEqual(kernel_member["boot_protocol"], "linux_direct")
         self.assertEqual(kernel_member["required_capabilities"], ["virtio_vsock", "virtio_blk"])
         self.assertEqual(
             kernel_member["artifacts"],
             [{
-                "name": "workload-kernel-aarch64-vmlinux",
+                "name": "default-tenant-workload-kernel-aarch64-vmlinux",
                 "format": {"kernel": "image"},
                 "sha256": eml.sha256_file(kernel),
                 "size": len(b"kernel bytes"),
@@ -236,7 +241,9 @@ class Emit(Fixture):
         )
 
     def test_carries_nothing_that_belongs_to_a_release(self):
-        manifest = self.emit(("workload_kernel", "kernel:elf", self.artifact("vmlinux")))
+        manifest = self.emit(
+            ("default_tenant_workload_kernel", "kernel:elf", self.artifact("vmlinux"))
+        )
         for field in ("revocation_channel", "supersedes"):
             self.assertNotIn(field, manifest)
         for field in ("repository", "workflow", "release_tag", "source_commit"):
@@ -255,6 +262,36 @@ class Emit(Fixture):
             [{"sdk_sidecar": "glibc"}, {"sdk_sidecar": "musl"}],
         )
 
+    def test_default_and_rootless_workload_pairs_have_distinct_profiled_roles(self):
+        artifacts = []
+        for prefix in ("default_tenant", "rootless_tenant"):
+            artifacts.extend(
+                [
+                    (
+                        f"{prefix}_workload_kernel",
+                        "kernel:elf",
+                        self.artifact(f"{prefix}/vmlinux"),
+                    ),
+                    (
+                        f"{prefix}_workload_rootfs",
+                        "ext4",
+                        self.artifact(f"{prefix}/rootfs.ext4"),
+                    ),
+                ]
+            )
+
+        manifest = self.emit(*artifacts)
+
+        self.assertEqual(
+            [member["role"] for member in manifest["members"]],
+            [
+                {"workload_kernel": "default_tenant"},
+                {"workload_rootfs": "default_tenant"},
+                {"workload_kernel": "rootless_tenant"},
+                {"workload_rootfs": "rootless_tenant"},
+            ],
+        )
+
     def test_copies_each_artifact_as_a_regular_file_under_its_name(self):
         real = self.artifact("store/vmlinux", b"linked kernel")
         link = self.built / "result"
@@ -269,20 +306,28 @@ class Emit(Fixture):
 
     def test_records_a_dirty_checkout_by_the_fingerprint(self):
         (self.mvm / "Cargo.lock").write_text("version = 4\n# edited\n")
-        manifest = self.emit(("workload_kernel", "kernel:elf", self.artifact("vmlinux")))
+        manifest = self.emit(
+            ("default_tenant_workload_kernel", "kernel:elf", self.artifact("vmlinux"))
+        )
         mvm = manifest["producer"]["local_checkouts"]["mvm"]
         self.assertEqual(mvm["worktree"], eml.worktree_state(self.mvm))
         self.assertEqual(mvm["worktree"]["state"], "dirty")
 
     def test_honours_source_date_epoch(self):
         with mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1767225600"}):
-            manifest = self.emit(("workload_kernel", "kernel:elf", self.artifact("vmlinux")))
+            manifest = self.emit(
+                ("default_tenant_workload_kernel", "kernel:elf", self.artifact("vmlinux"))
+            )
         self.assertEqual(manifest["issued_at"], "2026-01-01T00:00:00Z")
 
 
 class Refusals(Fixture):
     def kernel(self):
-        return ("workload_kernel", "kernel:elf", self.artifact("vmlinux"))
+        return (
+            "default_tenant_workload_kernel",
+            "kernel:elf",
+            self.artifact("vmlinux"),
+        )
 
     def test_an_output_inside_either_checkout(self):
         for root in (self.mvm, self.images):
@@ -340,15 +385,27 @@ class Refusals(Fixture):
     def test_unknown_roles_formats_and_capabilities(self):
         f = self.artifact("f")
         self.assertIn("unknown role", self.refused(("workload", "ext4", f)))
-        self.assertIn("unknown artifact format", self.refused(("workload_rootfs", "squashfs", f)))
-        self.assertIn("unknown artifact format", self.refused(("workload_kernel", "kernel:bzimage", f)))
+        self.assertIn(
+            "unknown artifact format",
+            self.refused(("default_tenant_workload_rootfs", "squashfs", f)),
+        )
+        self.assertIn(
+            "unknown artifact format",
+            self.refused(("default_tenant_workload_kernel", "kernel:bzimage", f)),
+        )
         self.assertIn(
             "unknown capability",
-            self.refused(("workload_rootfs", "ext4", f), capabilities=[("workload_rootfs", "gpu")]),
+            self.refused(
+                ("default_tenant_workload_rootfs", "ext4", f),
+                capabilities=[("default_tenant_workload_rootfs", "gpu")],
+            ),
         )
         self.assertIn(
             "has no --artifact",
-            self.refused(("workload_rootfs", "ext4", f), capabilities=[("builder_vm", "virtio_blk")]),
+            self.refused(
+                ("default_tenant_workload_rootfs", "ext4", f),
+                capabilities=[("builder_vm", "virtio_blk")],
+            ),
         )
 
     def test_two_artifacts_with_one_name(self):
@@ -356,13 +413,29 @@ class Refusals(Fixture):
         b = self.artifact("b/vmlinux")
         self.assertIn(
             "both be named",
-            self.refused(("workload_kernel", "kernel:elf", a), ("workload_kernel", "kernel:elf", b)),
+            self.refused(
+                ("default_tenant_workload_kernel", "kernel:elf", a),
+                ("default_tenant_workload_kernel", "kernel:elf", b),
+            ),
         )
 
     def test_an_empty_or_missing_or_non_file_artifact(self):
-        self.assertIn("zero-size", self.refused(("workload_rootfs", "ext4", self.artifact("e", b""))))
-        self.assertIn("no such file", self.refused(("workload_rootfs", "ext4", self.built / "absent")))
-        self.assertIn("not a regular file", self.refused(("workload_rootfs", "ext4", self.built)))
+        self.assertIn(
+            "zero-size",
+            self.refused(
+                ("default_tenant_workload_rootfs", "ext4", self.artifact("e", b""))
+            ),
+        )
+        self.assertIn(
+            "no such file",
+            self.refused(
+                ("default_tenant_workload_rootfs", "ext4", self.built / "absent")
+            ),
+        )
+        self.assertIn(
+            "not a regular file",
+            self.refused(("default_tenant_workload_rootfs", "ext4", self.built)),
+        )
 
     def test_no_artifacts_or_a_bad_cache_contract(self):
         self.assertIn("no --artifact", self.refused())

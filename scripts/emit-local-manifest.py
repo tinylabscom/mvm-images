@@ -47,7 +47,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # Semver, as the schema requires, and never a version any release is tagged.
 LOCAL_SET_VERSION = "0.0.0-local"
 MANIFEST_NAME = "image-set.json"
@@ -57,8 +57,26 @@ ARCHES = ("x86_64", "aarch64")
 # name -> (schema role, boots directly, published once for every arch)
 ROLES = {
     "builder_vm": ("builder_vm", True, False),
-    "workload_kernel": ("workload_kernel", True, False),
-    "workload_rootfs": ("workload_rootfs", False, False),
+    "default_tenant_workload_kernel": (
+        {"workload_kernel": "default_tenant"},
+        True,
+        False,
+    ),
+    "default_tenant_workload_rootfs": (
+        {"workload_rootfs": "default_tenant"},
+        False,
+        False,
+    ),
+    "rootless_tenant_workload_kernel": (
+        {"workload_kernel": "rootless_tenant"},
+        True,
+        False,
+    ),
+    "rootless_tenant_workload_rootfs": (
+        {"workload_rootfs": "rootless_tenant"},
+        False,
+        False,
+    ),
     "runtime_overlay": ("runtime_overlay", False, False),
     "sdk_sidecar_glibc": ({"sdk_sidecar": "glibc"}, False, False),
     "sdk_sidecar_musl": ({"sdk_sidecar": "musl"}, False, False),

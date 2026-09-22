@@ -38,6 +38,7 @@ esac
 rust_roles=(
   builder-vm.default
   default-tenant.default
+  rootless-tenant.default
   runtime-overlay.default
   runtime-overlay.sdk-sidecar-image
   runtime-overlay.sdk-sidecar-image-musl
@@ -92,7 +93,7 @@ for attr in "${rust_roles[@]}" "${helper_only_roles[@]}"; do
 
   if [ "$pin" = "$same" ]; then
     echo "ok: $attr: overriding with the pinned tree gives the pinned derivation"
-  elif [ "$attr" = default-tenant.default ]; then
+  elif [ "$attr" = default-tenant.default ] || [ "$attr" = rootless-tenant.default ]; then
     # Everything but the sidecar's generatorRev must be the same derivation:
     # the same inputs, and the same build command once the pinned commit is
     # replaced by the empty revision a path input reports.

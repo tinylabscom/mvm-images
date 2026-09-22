@@ -61,6 +61,9 @@ otherwise incompatible CNI or container network work by adding guest devices.
 
 - Publish roles atomically in one immutable image set for both guest
   architectures.
+- Emit workload kernel/rootfs roles with an explicit `default_tenant` or
+  `rootless_tenant` profile, and require consumers to select both halves from
+  the same profile.
 - Describe selection through manifest capabilities, architecture, boot
   protocol and artifact format—not host OS, backend name or workload name.
 - Do not advertise or require a network-device capability. The networking

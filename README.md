@@ -112,6 +112,12 @@ One release publishes one atomic image set. The manifest is the root object and
 individual assets are never selected by asking GitHub for "latest". A set that
 is missing an architecture or a role does not publish.
 
+Schema v2 qualifies each workload kernel and rootfs role with its generic
+profile: `default_tenant` or `rootless_tenant`. Both pairs are required for
+both guest architectures, and consumers select a kernel and rootfs from one
+profile atomically. The profile is not a backend or workload name; it is the
+declared base-image capability floor.
+
 Consumers pin a set by digest in `mvm`'s checked-in image lock, which records
 the repository, the immutable release tag, the manifest digest and the expected
 signing identity. Rolling back is a lock change to a previously verified set,
@@ -349,6 +355,12 @@ scripts/emit-local-manifest.py --mvm-checkout "$mvm" --arch x86_64 \
   --artifact runtime_overlay verity_root_hash "$out/overlay.roothash" \
   --capability runtime_overlay virtio_blk --capability runtime_overlay dm_verity
 ```
+
+Workload artifacts use the profile-qualified emitter roles
+`default_tenant_workload_{kernel,rootfs}` and
+`rootless_tenant_workload_{kernel,rootfs}`. They serialize as, for example,
+`{"workload_kernel":"rootless_tenant"}` so two profiles for one architecture
+cannot collide or be confused by a consumer.
 
 It copies each artifact into the new directory and writes `image-set.json`
 beside them, recording both checkouts' commits and working-tree state (a dirty
