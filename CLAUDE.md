@@ -14,9 +14,14 @@ The essential architecture is:
 - `rootless-tenant` supplies reusable rootless-container capabilities while
   preserving verified boot and the normal vsock, storage, egress and admission
   boundaries.
-- No guest NIC, TAP, TUN, bridge, veth, macvlan, SLIRP, passt, vpnkit, CNI
-  dataplane, raw-packet tunnel, guest NAT or guest firewall path is ever
-  permitted. Do not add a networking-device fallback for compatibility.
+- No base-image guest NIC, TAP, TUN, bridge, veth, macvlan, SLIRP, passt,
+  vpnkit, CNI dataplane, raw-packet tunnel, guest NAT or guest firewall path
+  is ever permitted. Do not add a networking-device fallback for
+  compatibility. The one opt-in exception is `kernel/datapath.nix`, a
+  non-base kernel posture with an in-guest bridge/veth datapath that still
+  boots no NIC, TAP, TUN or macvlan and reaches the host only over the
+  authenticated FlowMux session; `scripts/check_no_network_devices.py`
+  asserts both halves.
 - Guest loopback adapters connect proxy-aware traffic, DNS, mediated ping,
   typed connectors and declared ingress to the single authenticated FlowMux
   session over vsock. The host endpoint owns external sockets and policy.

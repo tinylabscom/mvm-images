@@ -45,6 +45,19 @@ attach or assume a NIC, TAP, TUN, bridge, veth pair, macvlan, SLIRP, passt,
 vpnkit, CNI dataplane, raw-packet tunnel, guest NAT or guest firewall path.
 Do not add a second networking implementation as a development fallback.
 
+One explicit, non-base exception exists: `kernel/datapath.nix` is an opt-in
+third kernel posture for consumers that run an in-guest orchestrator on a
+cluster-internal datapath (bridge + veth pairs between network namespaces,
+programmed by the in-guest netfilter cluster). It re-enables exactly those
+symbols through `disableExemptions`; it still boots no NIC, TAP, TUN or
+macvlan, and nothing on its datapath reaches the host — external traffic
+still crosses the single FlowMux session over vsock, and host ingress still
+arrives only at pre-declared signed ports. Base images never select it. The
+contract check (`scripts/check_no_network_devices.py`) asserts both halves:
+base postures keep every network device off; the datapath posture keeps
+`VIRTIO_NET`/`TUN`/`MACVLAN` off while `BRIDGE`/`VETH`/`NET_NS`/`NETFILTER`
+are on.
+
 Guest loopback is only for local adapters. Proxy-aware TCP/UDP, controlled DNS,
 mediated ping, typed connectors and declared ingress use the single
 authenticated FlowMux session over vsock. The host endpoint owns external

@@ -31,6 +31,7 @@
           base = import ./base.nix { inherit pkgs; };
           workload = import ./workload.nix { inherit pkgs base; };
           rootless = import ./rootless.nix { inherit pkgs base; };
+          datapath = import ./datapath.nix { inherit pkgs base; };
           builder = import ./builder.nix { inherit pkgs base; };
 
           # "aarch64" / "x86_64" for the published filenames (matches the
@@ -59,6 +60,7 @@
               ln -s ${builder.passthru.configfile} $out/builder.config
               ln -s ${workload.passthru.configfile} $out/workload.config
               ln -s ${rootless.passthru.configfile} $out/rootless.config
+              ln -s ${datapath.passthru.configfile} $out/datapath.config
             '';
 
           workloadSizeopt = import ./workload.nix {
@@ -127,14 +129,17 @@
         {
           workload-vmlinux = workload;
           rootless-vmlinux = rootless;
+          datapath-vmlinux = datapath;
           builder-vmlinux = builder;
           workload-configfile = workload.passthru.configfile;
           rootless-configfile = rootless.passthru.configfile;
+          datapath-configfile = datapath.passthru.configfile;
           builder-configfile = builder.passthru.configfile;
           resolved-configs = resolvedConfigs;
           builder-metrics = metricsFor "builder" builder builder.passthru.configfile;
           workload-metrics = metricsFor "workload" workload workload.passthru.configfile;
           rootless-metrics = metricsFor "rootless" rootless rootless.passthru.configfile;
+          datapath-metrics = metricsFor "datapath" datapath datapath.passthru.configfile;
           metrics = metricsFor "workload" workload workload.passthru.configfile;
           workload-sizeopt-vmlinux = workloadSizeopt;
           workload-sizeopt-configfile = workloadSizeopt.passthru.configfile;

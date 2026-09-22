@@ -61,6 +61,15 @@ no guest firewall, NAT or routing fallback because there is no guest NIC for
 one to govern. This is the permanent networking contract documented in
 [`mvm`'s networking guide](https://github.com/tinylabscom/mvm/blob/main/public/src/content/docs/guides/networking.md).
 
+One opt-in, non-base kernel posture is the deliberate exception, and it does
+not weaken any of the above: `kernel/datapath.nix` (see
+[`kernel/README.md`](./kernel/README.md)) adds an *in-guest* datapath —
+bridge + veth pairs between network namespaces, a network namespace, and the
+netfilter cluster that programs them — for consumers that run an in-guest
+orchestrator with cluster-internal networking. It attaches no NIC, TAP, TUN
+or macvlan, has no upstream interface, and reaches the host only the same
+way every guest does: the authenticated FlowMux session over vsock.
+
 `rootless-tenant` is not a Kubernetes image. It contains no Kubernetes package,
 service, configuration or naming. Kubernetes, build farms and other consumers
 compose their own software in their own repositories on top of the same

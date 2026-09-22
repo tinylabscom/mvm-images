@@ -15,6 +15,13 @@ olddefconfig`. Three kernels derive from one shared base:
   user/mount/PID/IPC/UTS namespace, cgroup v2, PTY and notification floor for
   generic rootless containers. It deliberately has no network namespace or
   network device; external traffic still uses FlowMux over vsock.
+- [`datapath.nix`](./datapath.nix) — the rootless floor plus an explicitly
+  opt-in *in-guest datapath*: a network namespace, bridge + veth (+VXLAN)
+  adapters between guest network namespaces, and the netfilter/conntrack/
+  iptables cluster that programs them. It is a third, non-base posture for
+  consumers that run an in-guest orchestrator with cluster-internal
+  networking. It still boots no NIC, TAP, TUN or macvlan — the datapath has
+  no upstream interface, and external traffic still uses FlowMux over vsock.
 
 Two ways the same files are consumed:
 

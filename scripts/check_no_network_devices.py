@@ -40,12 +40,22 @@ def check_kernel_contract() -> None:
         )
 
 
+# Host-facing devices the permanent contract forbids in EVERY posture,
+# including the in-guest-datapath kernel: that posture re-enables
+# cluster-internal adapters (bridge/veth under NETDEVICES) but never a
+# device that faces the host or the network.
+HOST_FACING_DEVICES = ("VIRTIO_NET", "TUN", "MACVLAN")
+
+
 def check_resolved_kernel_configs(paths: list[Path]) -> None:
     forbidden = ("NETDEVICES", "VIRTIO_NET", "TUN", "VETH", "BRIDGE", "MACVLAN")
     required = ("VSOCKETS", "VIRTIO_VSOCKETS")
     failures = []
     for path in paths:
         text = path.read_text(encoding="utf-8")
+        if "datapath" in path.name:
+            check_datapath_resolved_config(path, text, failures)
+            continue
         for symbol in forbidden:
             if f"CONFIG_{symbol}=y" in text or f"CONFIG_{symbol}=m" in text:
                 failures.append(f"{path}: CONFIG_{symbol} is enabled")
@@ -54,6 +64,54 @@ def check_resolved_kernel_configs(paths: list[Path]) -> None:
                 failures.append(f"{path}: CONFIG_{symbol}=y is missing")
     if failures:
         raise ContractError("resolved kernel contract failed:\n  " + "\n  ".join(failures))
+
+
+def check_datapath_resolved_config(path: Path, text: str, failures: list[str]) -> None:
+    """The in-guest-datapath posture: cluster-internal adapters on, host-
+    facing devices off, vsock intact. Distinguished from the base contract
+    by the config's name (the publisher names it `datapath.config`)."""
+    for symbol in ("NET_NS", "NETDEVICES", "BRIDGE", "VETH", "NETFILTER"):
+        if f"CONFIG_{symbol}=y" not in text:
+            failures.append(f"{path}: datapath config has CONFIG_{symbol} off")
+    for symbol in HOST_FACING_DEVICES:
+        if f"CONFIG_{symbol}=y" in text or f"CONFIG_{symbol}=m" in text:
+            failures.append(f"{path}: datapath config enables CONFIG_{symbol}")
+    for symbol in ("VSOCKETS", "VIRTIO_VSOCKETS"):
+        if f"CONFIG_{symbol}=y" not in text:
+            failures.append(f"{path}: CONFIG_{symbol}=y is missing")
+
+
+def check_datapath_contract() -> None:
+    """`kernel/datapath.nix` is the one posture allowed an in-guest
+    datapath. It must request the cluster-internal symbols explicitly and
+    must not exempt or enable any host-facing device: the permanent
+    no-network-device guarantee is that no guest boots a NIC, TAP, TUN or
+    macvlan — a bridge between in-guest namespaces is not that."""
+    source = _text("kernel/datapath.nix")
+    enables = source.split("extraEnables = [", 1)[1].split("]", 1)[0]
+    exemptions = source.split("disableExemptions = [", 1)[1].split("]", 1)[0]
+    for symbol in ("NET_NS", "BRIDGE", "VETH", "NETFILTER"):
+        if f'"{symbol}"' not in enables:
+            raise ContractError(
+                f"kernel/datapath.nix does not enable the datapath symbol: {symbol}"
+            )
+    for symbol in HOST_FACING_DEVICES:
+        if f'"{symbol}"' in exemptions:
+            raise ContractError(
+                f"kernel/datapath.nix exempts a host-facing device: {symbol}"
+            )
+    # Every exemption must pair with an enable request (the same rule the
+    # nix eval enforces) — an arch-dependent no-op exemption is a mistake.
+    for symbol in ("BRIDGE", "NETDEVICES", "POSIX_MQUEUE", "VETH"):
+        if f'"{symbol}"' not in exemptions:
+            raise ContractError(
+                f"kernel/datapath.nix lost its datapath exemption: {symbol}"
+            )
+    for symbol in ("BRIDGE", "NETDEVICES", "VETH"):
+        if f'"{symbol}"' not in enables:
+            raise ContractError(
+                f"kernel/datapath.nix exempts {symbol} without enabling it"
+            )
 
 
 def check_qemu_wasm_contract() -> None:
@@ -131,6 +189,7 @@ def check_e2e_harness_contract() -> None:
 
 def run_all() -> None:
     check_kernel_contract()
+    check_datapath_contract()
     check_qemu_wasm_contract()
     check_e2e_harness_contract()
 
@@ -151,8 +210,12 @@ def main() -> int:
         help="also verify a resolved Linux .config (repeatable)",
     )
     args = parser.parse_args()
+    def kernel_checks() -> None:
+        check_kernel_contract()
+        check_datapath_contract()
+
     checks = {
-        "kernel": check_kernel_contract,
+        "kernel": kernel_checks,
         "qemu-wasm": check_qemu_wasm_contract,
         "e2e": check_e2e_harness_contract,
     }

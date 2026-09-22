@@ -46,5 +46,57 @@ class ResolvedKernelContractTests(unittest.TestCase):
             contract.check_resolved_kernel_configs([path])
 
 
+class DatapathContractTests(unittest.TestCase):
+    def test_the_repo_datapath_kernel_satisfies_its_contract(self):
+        # Runs against the real kernel/datapath.nix: the posture must keep
+        # host-facing devices out while requesting the in-guest datapath.
+        contract.check_datapath_contract()
+
+    def test_datapath_resolved_config_accepts_bridge_and_veth(self):
+        path = ResolvedKernelContractTests().write_config(
+            "CONFIG_VSOCKETS=y\n"
+            "CONFIG_VIRTIO_VSOCKETS=y\n"
+            "CONFIG_NETDEVICES=y\n"
+            "CONFIG_BRIDGE=y\n"
+            "CONFIG_VETH=y\n"
+            "CONFIG_NET_NS=y\n"
+            "CONFIG_NETFILTER=y\n"
+            "# CONFIG_VIRTIO_NET is not set\n"
+            "# CONFIG_TUN is not set\n"
+            "# CONFIG_MACVLAN is not set\n"
+        )
+        path = path.rename(path.with_name("datapath.config"))
+        contract.check_resolved_kernel_configs([path])
+
+    def test_datapath_resolved_config_rejects_a_host_facing_device(self):
+        for symbol in ("VIRTIO_NET", "TUN", "MACVLAN"):
+            with self.subTest(symbol=symbol):
+                case = ResolvedKernelContractTests()
+                path = case.write_config(
+                    "CONFIG_VSOCKETS=y\n"
+                    "CONFIG_VIRTIO_VSOCKETS=y\n"
+                    "CONFIG_NETDEVICES=y\n"
+                    "CONFIG_BRIDGE=y\n"
+                    "CONFIG_VETH=y\n"
+                    "CONFIG_NET_NS=y\n"
+                    "CONFIG_NETFILTER=y\n"
+                    f"CONFIG_{symbol}=y\n"
+                )
+                path = path.rename(path.with_name("datapath.config"))
+                with self.assertRaises(contract.ContractError):
+                    contract.check_resolved_kernel_configs([path])
+
+    def test_datapath_resolved_config_requires_the_datapath_symbols(self):
+        case = ResolvedKernelContractTests()
+        path = case.write_config(
+            "CONFIG_VSOCKETS=y\n"
+            "CONFIG_VIRTIO_VSOCKETS=y\n"
+            "# CONFIG_NETDEVICES is not set\n"
+        )
+        path = path.rename(path.with_name("datapath.config"))
+        with self.assertRaises(contract.ContractError):
+            contract.check_resolved_kernel_configs([path])
+
+
 if __name__ == "__main__":
     unittest.main()
