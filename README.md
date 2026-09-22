@@ -1,16 +1,48 @@
 # mvm-images
 
-The system-image train for [mvm](https://github.com/tinylabscom/mvm): the guest
-images an mvm host boots, built, verified, signed and published here, and
-consumed there through one digest-pinned lock file.
+The system-image train for [mvm](https://github.com/tinylabscom/mvm): every
+base image an mvm host boots is built, verified, signed and published here,
+then consumed by `mvm` through one digest-pinned lock file.
 
-This repository is being populated by the migration described in
-[`specs/plans/2026-09-16-image-repository-extraction.md`](https://github.com/tinylabscom/mvm/blob/main/specs/plans/2026-09-16-image-repository-extraction.md)
-in the `mvm` repository. Governance comes first, sources follow, and the trust
-root moves last. The image sources are here now and build in CI; until the
-migration reaches its publication workstream, the canonical images are still
-published from `mvm`'s `boot-image/vN` releases, and nothing here publishes
-anything.
+## Start here
+
+`just` is the contributor interface. Run `just` or `just list` to see the
+supported image roles and commands; use the recipes instead of reconstructing
+the underlying Nix commands from CI.
+
+```sh
+just test          # fast unit + static contract checks; never starts mvm
+just bdd           # executable standalone-image behavior
+just build all     # every release-bearing output for this host architecture
+just release-check # everything expected before a PR is ready
+```
+
+Images are Linux artifacts. Run builds on Linux or configure a Linux remote
+Nix builder. A release builds both `x86_64` and `aarch64` in GitHub Actions, so
+a local `just build-all` is an architecture-local confidence check rather than
+a substitute for the release workflow.
+
+The normal interaction loop is deliberate:
+
+1. Start from an up-to-date `main`, create a branch and make the image change.
+2. Use `just build all` when image bytes change, then `just release-check`.
+3. Open a pull request. Required checks and review must pass; enable auto-merge
+   so the repository's merge queue lands it. Never push a product change
+   directly to `main`.
+4. After the PR is merged, return the local checkout to `main` and pull it
+   before cutting an image-set release.
+
+```sh
+git switch main
+git pull --ff-only
+git switch -c feat/my-image-change
+# edit, then:
+just build all
+just release-check
+git push -u origin HEAD
+gh pr create --fill
+gh pr merge --auto --squash
+```
 
 ## Architecture: images are produced here
 
@@ -78,7 +110,7 @@ notification. It deliberately omits `CONFIG_NET_NS` as well as every network
 device. Consumers use an attached writable volume for container state and the
 same loopback-plus-FlowMux path as `default-tenant` for all external traffic.
 
-## What this repository will own
+## What this repository owns
 
 | Role | Artifacts |
 |---|---|
@@ -126,6 +158,33 @@ never a mutation of a published one.
 Releases are immutable. A bad set is superseded by publishing revocation
 metadata and a new set, never by deleting or overwriting an existing one.
 
+### Cutting a GitHub Release
+
+Only a protected `image-set/v<semver>` tag can start a release. The command
+below refuses to run unless the checkout is clean, on `main`, and exactly
+synced with `origin/main`; it runs the local release gates and pushes the tag.
+It does not upload assets from the contributor's machine.
+
+```sh
+git switch main
+git pull --ff-only
+just release 0.1.0
+```
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) then builds
+every role on both guest architectures, assembles all 19 roles in the current
+consumer train, emits a signed pack manifest and SPDX SBOM for each member,
+signs the root `image-set.json` with Sigstore keyless OIDC, and verifies the
+lock, signing identity, completeness and every artifact digest with the exact
+`mvm` commit pinned by this repository. Only after those checks pass does the
+protected `image-release` environment create the immutable
+[GitHub Release](https://github.com/tinylabscom/mvm-images/releases). A missing
+role or architecture therefore produces no release.
+
+Release tags and assets are never moved, replaced or deleted. To recover from
+a bad release, publish revocation metadata, fix the source through another PR
+and merge-queue run, and cut a higher version.
+
 ### Cadence and retention
 
 Image sets are published when their inputs change — a kernel bump, a Nix input
@@ -161,6 +220,7 @@ kernel/                 builder, workload and rootless kernel configs; standalon
 qemu-wasm/              QEMU/WebAssembly engine, smoke image and browser pack
 packaging/              static checks run on staged artifacts
 scripts/                kernel, host-binary, QEMU-wasm and drift tooling
+  assemble-release.py   complete-set assembly; refuses a partial release
 sources/                what was copied from mvm, and the documented rewrites
 SOURCES.md              provenance of every copied file
 ```
@@ -193,32 +253,36 @@ pinned commit by anything else.
 
 ### Building locally
 
-Every documented command below is also a `just` recipe (`just --list`):
-`just build <role> [attr]` for the plain Nix builds, `just builder-vm [mvm-checkout]`
-for the builder image, `just with-mvm <checkout> <role>` for a paired checkout,
-`just image-set [mvm-checkout] <role>` on a host without Nix, and
-`just release-check` for the pre-publish gates.
-
-The images are Linux artifacts, so build them on Linux (or through a Linux
-remote builder):
+Build the complete release surface for the current architecture with one
+command. It includes the builder VM and Stage 0 rootfs, default and rootless
+tenants, runtime overlay, both SDK sidecars, initramfs, all three kernels and,
+on x86_64, the QEMU/WebAssembly smoke pack:
 
 ```sh
-nix build .#legacyPackages.x86_64-linux.runtime-overlay.default
-nix build .#legacyPackages.x86_64-linux.initramfs.default
-nix build .#legacyPackages.x86_64-linux.default-tenant.default --impure
-nix build .#legacyPackages.x86_64-linux.rootless-tenant.default --impure
-nix build ./kernel#workload-vmlinux
-nix build ./kernel#rootless-vmlinux
+just build all       # preferred role-oriented spelling
+just build role=all  # equivalent named-argument spelling
+just build-all       # explicit alias; optionally accepts an architecture
 ```
 
-The builder VM also needs three static host binaries built outside Nix. Build
-them from the pinned commit, then point the image at them:
+For a focused iteration, address one role or kernel. `just builder-vm` also
+cross-compiles the three static host binaries it needs from the pinned `mvm`
+commit, so there is no separate environment-variable dance.
 
 ```sh
-scripts/install-host-toolchain.sh          # zig + cargo-zigbuild at mvm's pins
-scripts/build-host-binaries.sh x86_64      # prints MVM_HOST_BIN_DIR=...
-MVM_HOST_BIN_DIR=... nix build .#legacyPackages.x86_64-linux.builder-vm.default --impure
+just list
+just build runtime-overlay default
+just build initramfs default
+just build default-tenant default x86_64-linux --impure
+just build rootless-tenant default x86_64-linux --impure
+just kernel workload-vmlinux
+just kernel rootless-vmlinux
+just builder-vm
 ```
+
+The optional final arguments select a system or pass Nix flags—for example,
+`just build runtime-overlay default aarch64-linux --no-link`. Tenant production
+outputs require the explicit `--impure` shown above; `just builder-vm` and the
+complete-build aliases set their own required flags.
 
 `MVM_WORKSPACE_PATH` must be unset; the flake refuses to evaluate with it,
 because `mvm`'s `nix/flake.nix` would otherwise build from whatever checkout it
@@ -227,9 +291,11 @@ refuses, fetch anonymously with `NIX_CONFIG='access-tokens ='`.
 
 CI builds every image on both architectures on pull requests that touch the
 image sources (`.github/workflows/build.yml`) and keeps the results as workflow
-artifacts. It never releases or signs. The QEMU/WebAssembly job boots its pack
-directly in headless Chromium. The x86 rootless job directly boots the actual
-rootless smoke variant in QEMU and waits for its capability witness.
+artifacts. A pull-request build cannot sign or release; only the protected tag
+workflow can consume those builders as a release. The QEMU/WebAssembly job
+boots its pack directly in headless Chromium. The x86 rootless job directly
+boots the actual rootless smoke variant in QEMU and waits for its capability
+witness.
 
 ### Tests
 
@@ -290,12 +356,11 @@ recipes; those recipes are not a second source of truth.
 
 ### Advancing the mvm pin
 
-1. Change the commit in the `mvm` input URL in `flake.nix` and run
-   `nix flake lock` (use a full 40-character SHA of a commit on `mvm`'s `main`).
-2. Run `scripts/check-source-drift.sh`. Anything `mvm` changed in the copied
+1. Change the commit in the `mvm` input URL in `flake.nix` and update
+   `flake.lock` (use a full 40-character SHA of a commit on `mvm`'s `main`).
+2. Run `just release-check`. Anything `mvm` changed in the copied
    files since the last pin is reported; carry each change over, or record why
-   not in `SOURCES.md`. Before moving, `--against <ref> --mvm-git-dir <clone>`
-   shows the same report for a candidate commit.
+   not in `SOURCES.md`.
 3. If `mvm` bumped nixpkgs or microvm.nix in its image flakes, update the
    matching input here to the same revision; the drift check compares them.
 4. Open a pull request. The build workflow rebuilds everything from the new
@@ -312,13 +377,13 @@ mvmco/
   mvm-images/
 ```
 
-Nothing looks for that sibling. A build names the mvm checkout it uses, by
-overriding the flake's `mvm` input with its canonical path:
+Nothing looks for that sibling. A build names the mvm checkout explicitly:
 
 ```sh
-mvm=$(cd ../mvm && pwd -P)
-nix build .#legacyPackages.x86_64-linux.runtime-overlay.default \
-  --override-input mvm "path:$mvm"
+just with-mvm ../mvm runtime-overlay default
+just with-mvm ../mvm default-tenant default
+just with-mvm ../mvm rootless-tenant default
+just builder-vm ../mvm
 ```
 
 Every role builds this way, and every guest binary then comes from that
@@ -333,22 +398,12 @@ override is the one way in. Two things to know about `path:`:
 - it has no commit, so the default microVM's sidecar records an empty
   `generatorRev`, as `mvm`'s own `path:` builds do.
 
-The builder VM's host binaries come from the same checkout:
-
-```sh
-scripts/install-host-toolchain.sh --mvm-checkout "$mvm"
-scripts/build-host-binaries.sh --mvm-checkout "$mvm" x86_64   # prints MVM_HOST_BIN_DIR=...
-MVM_HOST_BIN_DIR=... nix build .#legacyPackages.x86_64-linux.builder-vm.default \
-  --impure --override-input mvm "path:$mvm"
-```
-
-`scripts/emit-local-manifest.py` then describes what was built, in the image-set
+`just manifest` then describes what was built, in the image-set
 manifest schema `mvm` parses for a released set:
 
 ```sh
-out=$(nix build .#legacyPackages.x86_64-linux.runtime-overlay.default \
-  --override-input mvm "path:$mvm" --no-link --print-out-paths)
-scripts/emit-local-manifest.py --mvm-checkout "$mvm" --arch x86_64 \
+out=$(readlink result)
+just manifest --mvm-checkout ../mvm --arch x86_64 \
   --builder-cache-contract 1 --out /tmp/local-set \
   --artifact runtime_overlay ext4 "$out/overlay.ext4" \
   --artifact runtime_overlay verity_hash_tree "$out/overlay.verity" \

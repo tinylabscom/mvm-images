@@ -7,7 +7,9 @@ name: Build
 # for the builder VM, runtime overlay, SDK sidecars, default microVM and
 # QEMU/WebAssembly pack, release.yml for the initramfs, kernel-build.yml for the
 # kernels — with the same attributes, runners and staged file names, so the
-# outputs can be compared asset for asset.
+# outputs can be compared asset for asset. The protected release workflow calls
+# this workflow and is the only path that turns the completed artifact set into
+# a signed GitHub Release.
 #
 # Not mirrored here: signing and publication (no identity to mint in a build
 # lane), the attested runtime pack (a signing step), and the default microVM's
@@ -15,6 +17,7 @@ name: Build
 # this lane.
 
 on:
+  workflow_call: {}
   pull_request:
     paths:
       - flake.nix
