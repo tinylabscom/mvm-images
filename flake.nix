@@ -45,7 +45,7 @@
     };
     nixpkgs-initramfs.url = "github:NixOS/nixpkgs/nixos-25.11";
     mvm = {
-      url = "github:tinylabscom/mvm/ca3895a4df1df9d51726ae6be0900012ee137a88";
+      url = "github:tinylabscom/mvm/4fae272a063172157d1b3a1b1caa4f65e3368106";
       flake = false;
     };
   };

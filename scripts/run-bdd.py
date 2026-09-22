@@ -60,7 +60,6 @@ def _check_entry_points() -> None:
     paths = [
         ROOT / "scripts/e2e_boot.py",
         ROOT / "scripts/run-qemu-wasm-smoke-chromium.py",
-        ROOT / "scripts/run-qemu-wasm-smoke-suite.py",
     ]
     forbidden = ("mvmctl", '"../mvm"', "bin/dev")
     violations = []
