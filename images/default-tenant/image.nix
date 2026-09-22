@@ -14,7 +14,7 @@
   # `outputs` below with them. This file is not a flake on its own.
 
   outputs =
-    { self, nixpkgs, microvm, mvm-src, rootless ? false, ... }:
+    { self, nixpkgs, microvm, mvm-src, ... }:
     let
       systems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
@@ -48,7 +48,7 @@
         import ../../kernel/base.nix { inherit pkgs; };
       mkWorkloadKernel = pkgs:
         import ../../kernel/workload.nix
-          { inherit pkgs rootless; base = kernelBaseFor pkgs; };
+          { inherit pkgs; base = kernelBaseFor pkgs; };
 
       # Verity determinism — copied verbatim from runtime-overlay
       # (nix/images/runtime-overlay/flake.nix:180-203). MUST stay in lockstep
@@ -123,7 +123,7 @@
 
       # One variant. `sealed = true` → prod (verity-sealed, rootless, no
       # do_exec); `sealed = false` → dev (accessible, exec-able).
-      mkVariant = { system, sealed, smoke ? false }:
+      mkVariant = { system, sealed }:
         let
           pkgs = import nixpkgs { inherit system; };
           lib = libFor system;
@@ -133,57 +133,18 @@
           # x86_64 loader wants an uncompressed ELF `vmlinux`. base.nix emits
           # the ELF beside the bzImage for exactly this.
           kernelFile = if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "vmlinux";
-          qemuKernelFile = if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "bzImage";
-          imageName =
-            if rootless then
-              if smoke then "mvm-rootless-microvm-smoke"
-              else if sealed then "mvm-rootless-microvm"
-              else "mvm-rootless-microvm-dev"
-            else if sealed then "mvm-default-microvm"
-            else "mvm-default-microvm-dev";
-          rootlessProbe = ''
-            #!/bin/sh
-            set -eu
-            test "$(id -u)" = 1000
-            test -w /sys/fs/cgroup/mvm-workload
-            probe=/sys/fs/cgroup/mvm-workload/mvm-rootless-probe-$$
-            mkdir "$probe"
-            rmdir "$probe"
-            test ! -e /dev/net/tun
-            for dev in /sys/class/net/*; do
-              test "$(basename "$dev")" = lo
-            done
-            unshare -Urmpf /bin/true
-            crun --version >/dev/null
-            fuse-overlayfs --version >/dev/null
-            echo MVM-ROOTLESS-READY
-            exec sleep infinity
-          '';
+          imageName = if sealed then "mvm-default-microvm" else "mvm-default-microvm-dev";
           rootfsPkg = lib.mkGuest {
             name = imageName;
             # command form → sealed/prod; shell form → dev/accessible.
             entrypoint =
               if sealed
-              then {
-                command =
-                  if smoke
-                  then [ "/usr/local/bin/mvm-rootless-probe" ]
-                  else [ "/bin/sleep" "infinity" ];
-              }
+              then { command = [ "/bin/sleep" "infinity" ]; }
               else { shell = "/bin/sh"; };
             # mkGuest supplies its own static busybox and pre-installs its
             # applet links. Re-adding the dynamic package here would pull the
             # glibc runtime closure into the sealed tenant image.
-            packages = nixpkgs.lib.optionals rootless [
-              pkgs.crun
-              pkgs.fuse-overlayfs
-            ];
-            extraFiles = nixpkgs.lib.optionalAttrs smoke {
-              "/usr/local/bin/mvm-rootless-probe" = {
-                content = rootlessProbe;
-                mode = "0555";
-              };
-            };
+            packages = [ ];
             # mkGuest's `kernel` arg supplies the in-rootfs module tree; the
             # workload kernel is module-free (DM_VERITY built-in), passed for
             # parity with a real workload image.
@@ -226,18 +187,6 @@
               ls -la ${kernelPkg} >&2
               exit 1
             fi
-
-            ${nixpkgs.lib.optionalString rootless ''
-              # Direct-QEMU test artifact. On x86 QEMU's Linux loader consumes
-              # a bzImage while Firecracker consumes the ELF above; both are
-              # built from the exact same resolved kernel configuration.
-              if [ -f ${kernelPkg}/${qemuKernelFile} ]; then
-                cp ${kernelPkg}/${qemuKernelFile} $out/kernel.img
-              else
-                echo "kernel ${kernelPkg} produced no ${qemuKernelFile}" >&2
-                exit 1
-              fi
-            ''}
 
             # Assert the emitted format. Reading the first bytes is the whole
             # check: ELF is "\x7fELF" at 0, an arm64 Image carries "ARMd" at
@@ -288,7 +237,6 @@
               $out/rootfs.ext4 \
               $out/rootfs-closure-paths \
               $out/mvm-meta.json
-            ${nixpkgs.lib.optionalString rootless "chmod 0644 $out/kernel.img"}
           ''
           + nixpkgs.lib.optionalString sealed ''
 
@@ -319,8 +267,6 @@
         default = mkVariant { inherit system; sealed = true; };
         prod = mkVariant { inherit system; sealed = true; };
         dev = mkVariant { inherit system; sealed = false; };
-      } // nixpkgs.lib.optionalAttrs rootless {
-        smoke = mkVariant { inherit system; sealed = true; smoke = true; };
       });
     };
 }

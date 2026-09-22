@@ -143,12 +143,10 @@ e2e-rootless-firecracker artifacts="result" binary="firecracker":
 e2e-qemu-wasm pack chrome:
     scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'
 
-# Compare this repository's build with mvm's in-tree build of the same role at
-# the pinned commit — the reproduce.yml lane by hand. Needs a checkout of the
-# pinned commit (build-host-binaries.sh leaves one behind) and, for
-# builder-vm, MVM_HOST_BIN_DIR from the same tree.
-compare-same-commit target role mvm_checkout out_dir:
-    scripts/compare-same-commit.sh '{{target}}' '{{role}}' '{{mvm_checkout}}' '{{out_dir}}'
+# Rebuild one canonical role byte-for-byte — the reproduce.yml lane by hand.
+# builder-vm additionally requires MVM_HOST_BIN_DIR, just like its normal build.
+reproduce target role out_dir:
+    scripts/check-reproducible.sh '{{target}}' '{{role}}' '{{out_dir}}'
 
 # Describe a built set in the manifest schema mvm parses, into a new directory
 # (local_checkouts producer, local-dev tier; mvm refuses it once either

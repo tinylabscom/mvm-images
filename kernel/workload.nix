@@ -28,7 +28,6 @@
   pkgs,
   base,
   optimizeForSize ? true,
-  rootless ? false,
 }:
 
 base.mkKernel {
@@ -46,36 +45,6 @@ base.mkKernel {
     "FS_DAX"
     "FUSE_DAX"
     "IPV6"
-  ]
-  ++ pkgs.lib.optionals rootless [
-    # Generic rootless-container capability floor. Deliberately omit NET_NS:
-    # rootless consumers share the guest's loopback-only network namespace and
-    # reach the host exclusively through FlowMux over AF_VSOCK. A separate
-    # network namespace would invite CNI/veth/TUN fallbacks that are outside
-    # the mvm guest contract.
-    "NAMESPACES"
-    "UTS_NS"
-    "IPC_NS"
-    "USER_NS"
-    "PID_NS"
-
-    # Unified cgroup v2 controllers delegated by mkGuest's fixed boot shim to
-    # uid 1000 at /sys/fs/cgroup/mvm-workload.
-    "CGROUPS"
-    "MEMCG"
-    "BLK_CGROUP"
-    "CGROUP_SCHED"
-    "FAIR_GROUP_SCHED"
-    "CGROUP_PIDS"
-    "CGROUP_FREEZER"
-    "CGROUP_CPUACCT"
-    "CPUSETS"
-
-    # Rootless OCI runtimes and supervisors need pseudoterminals and event
-    # notification, but never a network device.
-    "UNIX98_PTYS"
-    "INOTIFY_USER"
-    "FANOTIFY"
   ]
   ++ pkgs.lib.optionals optimizeForSize [ "CC_OPTIMIZE_FOR_SIZE" ];
   # Workload-only disables. Each drop lives here (not in shared base.nix)
@@ -174,14 +143,8 @@ base.mkKernel {
     "GNSS"
     "VLAN_8021Q"
   ]
-  ++ pkgs.lib.optionals rootless [
-    # Rootless workloads deliberately share the guest's loopback namespace.
-    # They do not get a private network namespace or any CNI-shaped escape
-    # hatch; all external sockets cross the authenticated vsock session.
-    "NET_NS"
-  ]
   ++ pkgs.lib.optionals optimizeForSize [ "CC_OPTIMIZE_FOR_PERFORMANCE" ];
-  requiredExtraDisables = pkgs.lib.optionals (!rootless) [
+  requiredExtraDisables = [
     "NAMESPACES"
     "CGROUPS"
   ];

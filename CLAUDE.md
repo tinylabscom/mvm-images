@@ -7,6 +7,8 @@ The essential architecture is:
 - `mvm-images` owns and publishes every canonical base image needed by `mvm`.
 - `mvm` consumes signed, digest-pinned generated image sets; it does not keep a
   second image source or canonical build path.
+- Reproducibility rebuilds the canonical image definitions here; never compare
+  output bytes against retired in-tree image recipes in `mvm`.
 - Maintain distinct `default-tenant` and generic `rootless-tenant` base-image
   postures for both guest architectures.
 - `rootless-tenant` supplies reusable rootless-container capabilities while

@@ -10,9 +10,10 @@ canonical image definition or publication path in `mvm`.
 
 Program source for the guest agent, runtime helpers and other `mvm` binaries
 may remain in `mvm`; image composition and image-specific build/release policy
-belong here. Transitional source mirrors and same-commit comparison lanes must
-be removed when their extraction workstream completes rather than becoming a
-permanent reverse dependency.
+belong here. Transitional source mirrors must be removed when their extraction
+workstream completes rather than becoming a permanent reverse dependency. Do
+not compare canonical output bytes with retired in-tree image recipes in
+`mvm`; reproducibility rebuilds the definitions in this repository.
 
 Workload-specific packages, services, configuration and tests belong in their
 application or template repository. Do not create workload-named images or

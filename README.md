@@ -18,9 +18,9 @@ anything.
 kernels, root filesystems, runtime overlays, initramfs images, builder images
 and bootstrap inputs. `mvm` consumes released image sets through its
 digest-pinned image lock; it does not own a second canonical image definition
-or publication path. During the extraction there are temporary source mirrors
-and same-commit reproduction checks, but the steady-state dependency is one
-way:
+or publication path. During the extraction there are temporary source mirrors,
+but image reproducibility is checked entirely against the canonical
+definitions here. The dependency is one way:
 
 ```text
 mvm source revision ──► mvm-images builds and publishes an image set
@@ -270,17 +270,15 @@ Kconfig did not restore a built-in or modular network device. The fast suite
 runs on every pull request; the browser boot is the hardware-independent E2E
 lane, while native QEMU and Firecracker commands are for KVM-capable runners.
 
-`.github/workflows/reproduce.yml` (`scripts/compare-same-commit.sh`) builds the
-builder VM and the default microVM a second way on the same runner: from
-`mvm`'s own in-tree image flakes at the pinned commit. It fails if the
-derivations or output files differ, or if a `--rebuild` of the final derivation
-is not bit-identical. The pinned mvm commit writes every filesystem and verity
-superblock from fixed seeds and UUIDs
+`.github/workflows/reproduce.yml` (`scripts/check-reproducible.sh`) rebuilds
+the canonical `builder-vm`, `default-tenant`, and `rootless-tenant` roles on
+both architectures. Nix rebuilds each final derivation instead of accepting
+its registered output and fails if the bytes differ. The pinned inputs write
+every filesystem and verity superblock from fixed seeds and UUIDs
 ([tinylabscom/mvm#3499](https://github.com/tinylabscom/mvm/issues/3499)), so a
 second build of the same derivation gives the same bytes.
-The rootless role has no legacy producer in `mvm`; its reproduction lane
-instead rebuilds the final derivation on both architectures and lets Nix fail
-if the bytes differ.
+The lane never invokes `mvm` or compares against its retired in-tree image
+recipes; those recipes are not a second source of truth.
 
 ### Advancing the mvm pin
 

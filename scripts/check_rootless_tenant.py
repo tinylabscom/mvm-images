@@ -26,21 +26,21 @@ def require(source: str, path: str, tokens: tuple[str, ...]) -> None:
 
 def check_rootless_contract() -> None:
     flake = text("flake.nix")
-    wrapper = text("images/rootless-tenant/image.nix")
-    tenant = text("images/default-tenant/image.nix")
-    kernel = text("kernel/workload.nix")
-    named_kernel = text("kernel/rootless.nix")
+    rootless_image = text("images/rootless-tenant/image.nix")
+    default_image = text("images/default-tenant/image.nix")
+    rootless_kernel = text("kernel/rootless.nix")
+    default_kernel = text("kernel/workload.nix")
 
     require(
         flake,
         "flake.nix",
         ("rootlessTenant", "images/rootless-tenant/image.nix", "rootless-tenant"),
     )
-    require(wrapper, "images/rootless-tenant/image.nix", ("rootless = true",))
     require(
-        tenant,
-        "images/default-tenant/image.nix",
+        rootless_image,
+        "images/rootless-tenant/image.nix",
         (
+            "../../kernel/rootless.nix",
             "pkgs.crun",
             "pkgs.fuse-overlayfs",
             "MVM-ROOTLESS-READY",
@@ -50,6 +50,16 @@ def check_rootless_contract() -> None:
             "/sys/fs/cgroup/mvm-workload",
         ),
     )
+    leaked_default_tokens = [
+        token
+        for token in ("pkgs.crun", "pkgs.fuse-overlayfs", "MVM-ROOTLESS-READY")
+        if token in default_image
+    ]
+    if leaked_default_tokens:
+        raise ContractError(
+            "default-tenant must remain independent of rootless tooling: "
+            + ", ".join(leaked_default_tokens)
+        )
 
     required_symbols = (
         "NAMESPACES",
@@ -67,18 +77,20 @@ def check_rootless_contract() -> None:
         "INOTIFY_USER",
         "FANOTIFY",
     )
-    rootless_block = kernel.split("pkgs.lib.optionals rootless [", 1)[1].split("]", 1)[0]
-    missing_symbols = [s for s in required_symbols if f'"{s}"' not in rootless_block]
+    missing_symbols = [s for s in required_symbols if f'"{s}"' not in rootless_kernel]
     if missing_symbols:
         raise ContractError(
-            "kernel/workload.nix rootless delta is missing: "
+            "kernel/rootless.nix is missing: "
             + ", ".join(missing_symbols)
         )
-    if '"NET_NS"' in rootless_block:
-        raise ContractError("rootless kernel must not enable CONFIG_NET_NS")
+    require(rootless_kernel, "kernel/rootless.nix", ('requiredExtraDisables = [ "NET_NS" ];',))
+    for symbol in ("NAMESPACES", "CGROUPS"):
+        if f'"{symbol}"' not in default_kernel:
+            raise ContractError(
+                f"kernel/workload.nix must retain the default {symbol} cut"
+            )
 
-    require(named_kernel, "kernel/rootless.nix", ("rootless = true",))
-    implementation = wrapper.lower() + named_kernel.lower()
+    implementation = rootless_image.lower() + rootless_kernel.lower()
     forbidden = ("kubernetes", "k8s", "k3s", "cni")
     found = [token for token in forbidden if token in implementation]
     if found:
