@@ -129,15 +129,15 @@ e2e-firecracker artifacts binary="firecracker":
 # Boot the actual rootless tenant smoke variant. It checks uid 1000, user/mount/
 # PID namespaces, delegated cgroup v2, crun + fuse-overlayfs, and loopback-only
 # networking before emitting MVM-ROOTLESS-READY.
-e2e-rootless-plan artifacts="result":
-    scripts/e2e_boot.py qemu '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --ready-marker MVM-ROOTLESS-READY --plan
-    scripts/e2e_boot.py firecracker '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --ready-marker MVM-ROOTLESS-READY --plan
+e2e-rootless-plan artifacts="result" runtime_overlay="result/runtime-overlay.ext4":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY --plan
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY --plan
 
-e2e-rootless-qemu artifacts="result" binary="qemu-system-x86_64" accel="kvm":
-    scripts/e2e_boot.py qemu '{{artifacts}}' --binary '{{binary}}' --accel '{{accel}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --ready-marker MVM-ROOTLESS-READY
+e2e-rootless-qemu artifacts="result" runtime_overlay="result/runtime-overlay.ext4" binary="qemu-system-x86_64" accel="kvm":
+    scripts/e2e_boot.py qemu '{{artifacts}}' --binary '{{binary}}' --accel '{{accel}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY
 
-e2e-rootless-firecracker artifacts="result" binary="firecracker":
-    scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --ready-marker MVM-ROOTLESS-READY
+e2e-rootless-firecracker artifacts="result" runtime_overlay="result/runtime-overlay.ext4" binary="firecracker":
+    scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --runtime-overlay '{{runtime_overlay}}' --ready-marker MVM-ROOTLESS-READY
 
 # Boot the browser pack directly under headless Chromium.
 e2e-qemu-wasm pack chrome:

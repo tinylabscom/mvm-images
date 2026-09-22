@@ -379,8 +379,11 @@ jobs:
           SYSTEM="${ARCH}-linux"
           SMOKE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.rootless-tenant.smoke" \
             --impure --no-link --print-out-paths | head -1)
+          RUNTIME_PATH=$(nix build ".#legacyPackages.${SYSTEM}.runtime-overlay.default" \
+            --impure --no-link --print-out-paths | head -1)
           ./scripts/e2e_boot.py qemu "$SMOKE_PATH" \
             --accel tcg --rootfs-name rootfs.ext4 --rootfs-type ext4 \
+            --runtime-overlay "$RUNTIME_PATH/overlay.ext4" \
             --ready-marker MVM-ROOTLESS-READY --timeout 180
       - name: Generate rootless tenant SBOM and checksums
         env:

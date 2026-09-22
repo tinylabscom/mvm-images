@@ -30,6 +30,8 @@ def check_rootless_contract() -> None:
     default_image = text("images/default-tenant/image.nix")
     rootless_kernel = text("kernel/rootless.nix")
     default_kernel = text("kernel/workload.nix")
+    e2e_harness = text("scripts/e2e_boot.py")
+    build_workflow = text(".github/workflows/build.yml")
 
     require(
         flake,
@@ -84,6 +86,20 @@ def check_rootless_contract() -> None:
             + ", ".join(missing_symbols)
         )
     require(rootless_kernel, "kernel/rootless.nix", ('requiredExtraDisables = [ "NET_NS" ];',))
+    require(
+        e2e_harness,
+        "scripts/e2e_boot.py",
+        (
+            "mvm.runtime_data=/dev/vdb",
+            "mvm.runtime_source_policy=required_overlay",
+            '"is_read_only": True',
+        ),
+    )
+    require(
+        build_workflow,
+        ".github/workflows/build.yml",
+        ("runtime-overlay.default", "--runtime-overlay"),
+    )
     for symbol in ("NAMESPACES", "CGROUPS"):
         if f'"{symbol}"' not in default_kernel:
             raise ContractError(

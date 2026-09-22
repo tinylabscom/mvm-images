@@ -179,6 +179,17 @@
                 content = rootlessProbe;
                 mode = "0555";
               };
+              # The lean rootfs has no free blocks at boot. These sentinels
+              # make the init-created mountpoints exist without resizing the
+              # image; the runtime still mounts its data over them.
+              "/mnt/config/.mvm-rootless-smoke" = {
+                content = "";
+                mode = "0444";
+              };
+              "/mnt/secrets/.mvm-rootless-smoke" = {
+                content = "";
+                mode = "0444";
+              };
             };
             # mkGuest's `kernel` arg supplies the in-rootfs module tree; the
             # rootless kernel is module-free (DM_VERITY built-in), passed for

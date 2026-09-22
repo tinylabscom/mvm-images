@@ -237,9 +237,9 @@ just e2e-plan /path/to/artifacts # inspect QEMU + Firecracker plans
 just e2e-qemu /path/to/artifacts
 just e2e-firecracker /path/to/artifacts
 just e2e-qemu-wasm /path/to/pack /path/to/chromium
-just e2e-rootless-plan /path/to/rootless-smoke
-just e2e-rootless-qemu /path/to/rootless-smoke
-just e2e-rootless-firecracker /path/to/rootless-smoke
+just e2e-rootless-plan /path/to/rootless-smoke /path/to/runtime-overlay.ext4
+just e2e-rootless-qemu /path/to/rootless-smoke /path/to/runtime-overlay.ext4
+just e2e-rootless-firecracker /path/to/rootless-smoke /path/to/runtime-overlay.ext4
 ```
 
 The native boot commands take the output of
@@ -254,13 +254,15 @@ immutable Nix store before mounting it read/write. Missing support for the
 requested VMM/accelerator is a hard failure, not a silent skip; QEMU uses KVM
 by default and accepts explicit `--accel tcg` for hardware-independent probes.
 
-The rootless commands take the `rootless-tenant.smoke` output and wait for
-`MVM-ROOTLESS-READY`. Before emitting it, the real sealed guest verifies that
+The rootless commands take the `rootless-tenant.smoke` output plus the canonical
+`runtime-overlay.default` `overlay.ext4`, attach that overlay read-only as a
+second block device, and wait for `MVM-ROOTLESS-READY`. Before emitting it, the
+real sealed guest verifies that
 its entrypoint is uid 1000, user/mount/PID namespaces work, its delegated
 cgroup v2 subtree is writable, `crun` and `fuse-overlayfs` execute,
 `/dev/net/tun` does not exist, and loopback is the only interface. QEMU and
-Firecracker still receive explicit block/serial/vsock-only plans; no `mvm`
-process participates.
+Firecracker still receive explicit block/serial/vsock-only plans; the overlay
+is a block device, and no `mvm` process or network device participates.
 
 `features/standalone_images.feature` holds the human-readable BDD contract.
 `scripts/check_no_network_devices.py` checks kernel, browser, and direct-VMM

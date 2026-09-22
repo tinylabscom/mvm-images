@@ -37,6 +37,25 @@ class E2EBootPlanTests(unittest.TestCase):
         self.assertTrue(any("vhost-vsock" in arg for arg in command))
         e2e_boot.assert_no_network_devices(command)
 
+    def test_qemu_runtime_overlay_is_read_only_second_block_device(self):
+        command = e2e_boot.qemu_command(
+            binary="qemu-system-x86_64",
+            kernel=Path("kernel.img"),
+            rootfs=Path("rootfs.ext4"),
+            runtime_overlay=Path("runtime-overlay.ext4"),
+            guest_cid=9,
+        )
+        self.assertTrue(any("mvm.runtime_data=/dev/vdb" in arg for arg in command))
+        self.assertTrue(
+            any("mvm.runtime_source_policy=required_overlay" in arg for arg in command)
+        )
+        self.assertIn(
+            "id=runtime,file=runtime-overlay.ext4,format=raw,if=none,readonly=on",
+            command,
+        )
+        self.assertIn("virtio-blk-pci,drive=runtime", command)
+        e2e_boot.assert_no_network_devices(command)
+
     def test_firecracker_plan_has_vsock_and_no_network_interfaces(self):
         config = e2e_boot.firecracker_config(
             kernel=Path("vmlinux"),
@@ -45,6 +64,31 @@ class E2EBootPlanTests(unittest.TestCase):
             guest_cid=9,
         )
         self.assertIn("vsock", config)
+        self.assertNotIn("network-interfaces", config)
+        e2e_boot.assert_no_network_devices(config)
+
+    def test_firecracker_runtime_overlay_is_read_only_second_block_device(self):
+        config = e2e_boot.firecracker_config(
+            kernel=Path("vmlinux"),
+            rootfs=Path("rootfs.ext4"),
+            runtime_overlay=Path("runtime-overlay.ext4"),
+            vsock_path=Path("vsock.sock"),
+            guest_cid=9,
+        )
+        self.assertIn("mvm.runtime_data=/dev/vdb", config["boot-source"]["boot_args"])
+        self.assertIn(
+            "mvm.runtime_source_policy=required_overlay",
+            config["boot-source"]["boot_args"],
+        )
+        self.assertEqual(
+            {
+                "drive_id": "runtime",
+                "path_on_host": "runtime-overlay.ext4",
+                "is_root_device": False,
+                "is_read_only": True,
+            },
+            config["drives"][1],
+        )
         self.assertNotIn("network-interfaces", config)
         e2e_boot.assert_no_network_devices(config)
 
