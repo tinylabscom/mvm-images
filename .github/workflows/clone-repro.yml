@@ -87,6 +87,15 @@ jobs:
           run_case mvm-rootless-tcg-smp1  repro/vmlinux-rootless tcg max "" 1
           run_case mvm-rootless-tcg-oldm  repro/vmlinux-rootless tcg max "-machine virt-6.0" 2
           run_case debian-kernel-tcg      /tmp/deb-vmlinuz tcg max
+          # Debian 6.1 (bookworm) — the version fork: does an old LTS pass?
+          wget -q "https://snapshot.debian.org/archive/debian-security/20260908T092208Z/pool/updates/main/l/linux/linux-image-6.1.0-52-arm64-unsigned_6.1.180-1_arm64.deb" -O /tmp/k61.deb
+          cd /tmp && mkdir -p k61 && cd k61 && ar x /tmp/k61.deb data.tar.xz && tar xf data.tar.xz
+          cp boot/vmlinuz-6.1.0-52-arm64 /tmp/deb61-vmlinuz
+          for m in "drivers/block/virtio_blk" "fs/ext4/ext4" "fs/jbd2/jbd2" "fs/mbcache"; do
+            xz -dc "usr/lib/modules/6.1.0-52-arm64/kernel/$m.ko.xz" > "/tmp/ir/mods/$(basename $m).ko"
+          done
+          cd /tmp
+          run_case debian-6.1-tcg /tmp/deb61-vmlinuz tcg max
       - name: upload logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
