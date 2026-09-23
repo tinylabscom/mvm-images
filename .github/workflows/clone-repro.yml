@@ -23,7 +23,8 @@ jobs:
       - name: fetch pristine userspace
         run: |
           mkdir -p /tmp/ir/bin /tmp/ir/mods /tmp/ir/proc /tmp/ir/sys /tmp/ir/newroot /tmp/ir/dev \
-                   /tmp/rfs/bin /tmp/rfs/usr/local/bin /tmp/rfs/lib/aarch64-linux-gnu
+                   /tmp/rfs/bin /tmp/rfs/usr/local/bin /tmp/rfs/lib/aarch64-linux-gnu \
+                   /tmp/rfs/proc /tmp/rfs/sys /tmp/rfs/dev
           # Debian static busybox (upstream binary, never touched by our builders)
           cd /tmp
           wget -q "http://ftp.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_arm64.deb" -O /tmp/bb.deb
