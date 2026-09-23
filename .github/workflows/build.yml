@@ -62,6 +62,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Copies match mvm at the pinned commit
         run: ./scripts/check-source-drift.sh
 
@@ -78,6 +86,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: A local mvm override builds from that checkout and nothing else
         run: ./scripts/check-local-mvm-override.sh x86_64-linux
 
@@ -98,6 +114,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Install the pinned zig and cargo-zigbuild
         run: ./scripts/install-host-toolchain.sh
       # The builder rootfs installs static musl host binaries built outside
@@ -162,6 +186,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build runtime overlay image
         env:
           ARCH: ${{ matrix.arch }}
@@ -216,6 +248,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build SDK sidecar image
         env:
           ARCH: ${{ matrix.arch }}
@@ -260,6 +300,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build default microVM image (prod variant)
         env:
           ARCH: ${{ matrix.arch }}
@@ -338,6 +386,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build sealed rootless tenant
         env:
           ARCH: ${{ matrix.arch }}
@@ -435,6 +491,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build the universal initramfs
         env:
           ARCH: ${{ matrix.arch }}
@@ -478,6 +542,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build builder + workload kernels
         env:
           ARCH: ${{ matrix.arch }}
@@ -512,6 +584,14 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Restore the Nix store cache
+        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          # Bound what we save: the overlay's shim closure pulls far more than
+          # the 10 GiB Actions cache holds, so keep the most valuable paths.
+          gc-max-store-size: 2G
       - name: Build QEMU-WASM browser pack
         run: |
           set -euo pipefail
