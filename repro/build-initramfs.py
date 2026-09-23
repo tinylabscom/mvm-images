@@ -21,7 +21,11 @@ for root, dirs, files in os.walk(src):
         p = os.path.normpath(os.path.join(rel, f))
         fp = os.path.join(root, f)
         with open(fp, "rb") as fh:
-            entries.append((p, fh.read(), 0o100644))
+            # anything executable on disk must stay executable in the
+            # archive — a non-executable /init panics the kernel with
+            # "No working init found".
+            mode = 0o100755 if os.access(fp, os.X_OK) else 0o100644
+            entries.append((p, fh.read(), mode))
 out_b = b"".join(rec(n, d, m) for n, d, m in entries) + rec("TRAILER!!!", b"", 0)
 with open(out, "wb") as fh:
     fh.write(gzip.compress(out_b, 9))
