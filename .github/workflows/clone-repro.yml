@@ -52,7 +52,7 @@ jobs:
           # modules must be uncompressed .ko for busybox insmod
           mkdir -p /tmp/ir/mods
           for m in virtio virtio_ring virtio_blk ext4 jbd2 mbcache crc16; do
-            src=$(find usr/lib/modules lib/modules -name "$m.ko*" | head -1)
+            src=$(find usr/lib/modules lib/modules -name "$m.ko*" 2>/dev/null | head -1)
             xz -dc "$src" > "/tmp/ir/mods/$m.ko"
           done
       - name: build initramfs
