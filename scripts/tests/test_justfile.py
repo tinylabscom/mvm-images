@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class JustfileToolchainTests(unittest.TestCase):
     def test_builder_vm_uses_the_zig_it_installs(self):
-        justfile = (ROOT / "Justfile").read_text()
+        justfile = (ROOT / "justfile").read_text()
         recipe = justfile.split("builder-vm mvm_checkout=", 1)[1].split(
             "# Build every release-bearing output", 1
         )[0]
