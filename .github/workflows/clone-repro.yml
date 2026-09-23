@@ -49,13 +49,10 @@ jobs:
           wget -q "http://ftp.debian.org/debian/pool/main/l/linux/linux-image-6.18.15+deb13-arm64-unsigned_6.18.15-1~bpo13+1_arm64.deb" -O /tmp/k.deb
           cd /tmp && ar x k.deb data.tar.xz && tar xf data.tar.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/drivers/block/virtio_blk.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/ext4/ext4.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/jbd2/jbd2.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/mbcache.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/lib/crc/crc16.ko.xz ./boot/vmlinuz-6.18.15+deb13-arm64
           cp boot/vmlinuz-6.18.15+deb13-arm64 /tmp/deb-vmlinuz
-          for m in virtio_blk ext4 jbd2 mbcache crc16; do
-            xz -dc usr/lib/modules/6.18.15+deb13-arm64/kernel/*/*/$m.ko.xz 2>/dev/null | gzip > /tmp/x 2>/dev/null || true
-          done
           # modules must be uncompressed .ko for busybox insmod
           mkdir -p /tmp/ir/mods
           for m in virtio_blk ext4 jbd2 mbcache crc16; do
-            src=$(find usr/lib/modules -name "$m.ko*" | head -1)
+            src=$(find usr/lib/modules lib/modules -name "$m.ko*" | head -1)
             xz -dc "$src" > "/tmp/ir/mods/$m.ko"
           done
       - name: build initramfs
