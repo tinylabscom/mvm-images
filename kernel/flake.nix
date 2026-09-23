@@ -32,6 +32,122 @@
           workload = import ./workload.nix { inherit pkgs base; };
           rootless = import ./rootless.nix { inherit pkgs base; };
           datapath = import ./datapath.nix { inherit pkgs base; };
+
+          # THROWAWAY bisect control #3: the rootless kernel built by gcc13
+          # instead of the default gcc 14. Tests whether the fork-path
+          # miscompile is specific to the nixpkgs gcc14 codegen. Delete with
+          # the bisect.
+          rootlessGcc13 = (pkgs.linuxManualConfig.override {
+            stdenv = pkgs.gcc13Stdenv;
+          }) {
+            src = kernelSourceTreeForGcc13;
+            version = base.kernelVersion;
+            modDirVersion = base.kernelVersion;
+            configfile = rootless.passthru.configfile;
+            allowImportFromDerivation = false;
+          };
+          kernelSourceTreeForGcc13 = pkgs.buildPackages.runCommand "linux-gcc13-source"
+            {
+              nativeBuildInputs = [ pkgs.buildPackages.libarchive ];
+            }
+            ''
+              mkdir -p "$out"
+              ${pkgs.buildPackages.libarchive}/bin/bsdtar -xf ${kernelTarballGcc13} -C "$out" --strip-components=1
+            '';
+          kernelTarballGcc13 = pkgs.fetchurl {
+            url = "mirror://kernel/linux/kernel/v6.x/linux-${base.kernelVersion}.tar.xz";
+            hash = "sha256-jO4Z4YObtv9NUlTXYZM65qtnBJLV7QMOCagFODINXEw=";
+          };
+
+          # THROWAWAY bisect control: near-stock defconfig with none of the
+          # base carve-down (only the guest-boot + repro floor requested).
+          # Built outside mkKernel on purpose: the all-built-in guards treat
+          # a modules-enabled stock config's `=m` symbols as dropped. Delete
+          # with the bisect.
+          stocktestSrc = pkgs.buildPackages.runCommand "linux-stocktest-source"
+            {
+              nativeBuildInputs = [ pkgs.buildPackages.libarchive ];
+            }
+            ''
+              mkdir -p "$out"
+              ${pkgs.buildPackages.libarchive}/bin/bsdtar -xf ${stocktestTarball} -C "$out" --strip-components=1
+            '';
+          stocktestConfig = pkgs.buildPackages.runCommandCC "mvm-kernel-config-stocktest"
+            {
+              nativeBuildInputs = with pkgs.buildPackages; [ gnumake bison flex bc perl pkg-config openssl ];
+              enableList = pkgs.lib.concatStringsSep " " [
+                "MODULES_N"
+                "VIRTIO" "VIRTIO_MMIO" "VIRTIO_PCI" "PCI" "VIRTIO_BLK" "VIRTIO_CONSOLE"
+                "HVC_DRIVER" "VSOCKETS" "VIRTIO_VSOCKETS"
+                "SERIAL_8250" "SERIAL_8250_CONSOLE" "SERIAL_OF_PLATFORM"
+                "BLOCK" "EXT4_FS" "TMPFS" "DEVTMPFS" "DEVTMPFS_MOUNT" "PROC_FS" "SYSFS"
+                "MD" "BLK_DEV_DM" "DM_VERITY"
+                "NAMESPACES" "UTS_NS" "IPC_NS" "USER_NS" "PID_NS" "NET_NS"
+                "CGROUPS" "MEMCG" "CGROUP_PIDS" "CGROUP_SCHED" "FAIR_GROUP_SCHED"
+                "CGROUP_FREEZER" "CGROUP_DEVICE" "CGROUP_CPUACCT" "BLK_CGROUP" "CPUSETS"
+              ];
+            }
+            ''
+              set -euo pipefail
+              cp -a --reflink=auto ${stocktestSrc}/. linux/
+              cd linux
+              chmod -R u+w .
+              export ARCH=arm64
+              export SHELL=${pkgs.buildPackages.bash}/bin/bash
+              export CONFIG_SHELL=${pkgs.buildPackages.bash}/bin/bash
+              if [ ! -x /bin/sh ]; then mkdir -p /bin; ln -s ${pkgs.buildPackages.bash}/bin/sh /bin/sh; fi
+              patchShebangs scripts/
+              make SHELL="$SHELL" defconfig
+              for s in $enableList; do
+                if [ "$s" = "MODULES_N" ]; then
+                  ./scripts/config --disable MODULES
+                else
+                  ./scripts/config --enable "$s"
+                fi
+              done
+              make SHELL="$SHELL" olddefconfig
+              cp .config $out
+            '';
+          stocktest = pkgs.linuxManualConfig {
+            src = stocktestSrc;
+            version = base.kernelVersion;
+            modDirVersion = base.kernelVersion;
+            configfile = stocktestConfig;
+            allowImportFromDerivation = false;
+          };
+
+          # THROWAWAY bisect control #2: Debian's own arm64 config (6.18.15),
+          # MODULES=n with the virtio/ext4/serial console forced built-in,
+          # built by the nixpkgs toolchain. Debian's gcc build of the same
+          # config family passes the clone repro; this isolates the compiler
+          # from the config. Delete with the bisect.
+          stockdebianSrc = pkgs.buildPackages.runCommand "linux-stockdebian-source"
+            {
+              nativeBuildInputs = [ pkgs.buildPackages.libarchive ];
+            }
+            ''
+              mkdir -p "$out"
+              ${pkgs.buildPackages.libarchive}/bin/bsdtar -xf ${stockdebianTarball} -C "$out" --strip-components=1
+            '';
+          stockdebianTarball = pkgs.fetchurl {
+            url = "mirror://kernel/linux/kernel/v6.x/linux-6.18.15.tar.xz";
+            hash = "sha256-fHFiFsPEE07Q3mkZVwHmd1d7vN05efMxwYKs0Gvy8XA=";
+          };
+          stockdebian = pkgs.linuxManualConfig {
+            src = stockdebianSrc;
+            version = "6.18.15";
+            modDirVersion = "6.18.15";
+            configfile = ./debian-config-6.18-builtins;
+            allowImportFromDerivation = false;
+          };
+          stockdebian-configfile = pkgs.runCommand "mvm-kernel-config-stockdebian" { } ''
+            cp ${./debian-config-6.18-builtins} $out
+          '';
+          stocktestTarball = pkgs.fetchurl {
+            url = "mirror://kernel/linux/kernel/v6.x/linux-${base.kernelVersion}.tar.xz";
+            hash = "sha256-jO4Z4YObtv9NUlTXYZM65qtnBJLV7QMOCagFODINXEw=";
+          };
+
           builder = import ./builder.nix { inherit pkgs base; };
 
           # "aarch64" / "x86_64" for the published filenames (matches the
@@ -133,6 +249,8 @@
           builder-vmlinux = builder;
           workload-configfile = workload.passthru.configfile;
           rootless-configfile = rootless.passthru.configfile;
+          rootless-gcc13-vmlinux = rootlessGcc13;
+          rootless-gcc13-configfile = rootless.passthru.configfile;
           datapath-configfile = datapath.passthru.configfile;
           builder-configfile = builder.passthru.configfile;
           resolved-configs = resolvedConfigs;
@@ -140,6 +258,11 @@
           workload-metrics = metricsFor "workload" workload workload.passthru.configfile;
           rootless-metrics = metricsFor "rootless" rootless rootless.passthru.configfile;
           datapath-metrics = metricsFor "datapath" datapath datapath.passthru.configfile;
+          stocktest-vmlinux = stocktest;
+          stocktest-configfile = stocktest.passthru.configfile;
+          stockdebian-vmlinux = stockdebian;
+          stockdebian-configfile = stockdebian-configfile;
+
           metrics = metricsFor "workload" workload workload.passthru.configfile;
           workload-sizeopt-vmlinux = workloadSizeopt;
           workload-sizeopt-configfile = workloadSizeopt.passthru.configfile;
