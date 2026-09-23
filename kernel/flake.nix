@@ -37,6 +37,273 @@
           # instead of the default gcc 14. Tests whether the fork-path
           # miscompile is specific to the nixpkgs gcc14 codegen. Delete with
           # the bisect.
+          # THROWAWAY bisect control #5: Debian's own gcc-14 driver + cc1
+          # (binaries from the Debian arm64 debs, patchelf'd onto the nix
+          # glibc + nix runtime libs) building the rootless config with the
+          # plain make recipe. Hydra's as/ld remain (PATH). If this passes,
+          # the hydra gcc/cc1 binaries miscompile the kernel. Delete with
+          # the bisect.
+          debianGcc = pkgs.runCommand "debian-gcc-14" {
+            nativeBuildInputs = [ pkgs.dpkg pkgs.patchelf ];
+          } ''
+            set -euo pipefail
+            mkdir -p $out
+            dpkg-deb -x ${debGccReal} $out
+            dpkg-deb -x ${debCppReal} $out
+            dpkg-deb -x ${debGccBase} $out
+            dpkg-deb -x ${debCc1} $out
+            dpkg-deb -x ${debIsl} $out
+            dpkg-deb -x ${debMpfr} $out
+            dpkg-deb -x ${debMpc} $out
+            dpkg-deb -x ${debZstd} $out
+            dpkg-deb -x ${debStdCpp} $out
+            dpkg-deb -x ${debGccS} $out
+            dpkg-deb -x ${debLibgccDev} $out
+            dpkg-deb -x ${debBinutils} $out
+            LIBS=$out/usr/lib/aarch64-linux-gnu:$out/lib/aarch64-linux-gnu
+            NIXLIBS=${pkgs.gmp}/lib:${pkgs.mpfr}/lib:${pkgs.libmpc}/lib:${pkgs.isl}/lib:${pkgs.zstd}/lib:${pkgs.zlib}/lib:${pkgs.stdenv.cc.cc.lib}/lib
+            # Every dynamically-linked ELF in the unpacked debs gets the nix
+            # glibc interpreter and a rath spanning the merged deb tree plus
+            # the nix runtime libs gcc's driver/cc1 link against (gmp, mpfr,
+            # mpc, isl, zstd, zlib, libstdc++/libgcc). Failures tolerated:
+            # scripts and static binaries have no .interp to patch.
+            find $out/usr/bin $out/usr/lib/aarch64-linux-gnu $out/usr/lib/gcc/aarch64-linux-gnu/14 $out/usr/libexec/gcc/aarch64-linux-gnu/14 \
+              -maxdepth 1 -type f ! -type l 2>/dev/null | while read f; do
+              patchelf --set-interpreter ${pkgs.glibc}/lib/ld-linux-aarch64.so.1 \
+                       --set-rpath "$LIBS:$NIXLIBS" "$f" 2>/dev/null || true
+            done
+            echo "== cc1 rpath =="
+            patchelf --print-rpath $out/usr/libexec/gcc/aarch64-linux-gnu/14/cc1 || true
+            ls -la ${pkgs.isl}/lib/libisl.so.* 2>/dev/null || echo "NIX ISL LIB MISSING"
+            echo "== cc1 needed =="
+            patchelf --print-needed $out/usr/libexec/gcc/aarch64-linux-gnu/14/cc1 || true
+          '';
+          debGccReal = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/gcc-14-aarch64-linux-gnu_14.2.0-19_arm64.deb";
+            hash = "sha256-X/c2ozK6XWCtRjNV7SXIw52hKBrPkVXML4pV/B1Hi+g=";
+          };
+          debCppReal = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/cpp-14-aarch64-linux-gnu_14.2.0-19_arm64.deb";
+            hash = "sha256-jliKw+/gb3eEsI/qxYTHDmllt0wEW65+ToC7QpOPfb4=";
+          };
+          debGccBase = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/gcc-14-base_14.2.0-19_arm64.deb";
+            hash = "sha256-NO6QZ5sBjA5kI0dHpMTArmt/Y1QRFQN0ZahifC37xZQ=";
+          };
+          debCc1 = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/libcc1-0_14.2.0-19_arm64.deb";
+            hash = "sha256-9eOQtf1lQyuCCvpAOmGrTWKGlI/AfKOqy00jCoH1yaU=";
+          };
+          debIsl = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/i/isl/libisl23_0.28-1_arm64.deb";
+            hash = "sha256-N3ZA/utsGWwvCrjWakVP+ihdexbR2oUKA3VaTRN3tOo=";
+          };
+          debMpfr = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/m/mpfr4/libmpfr6_4.2.2-3_arm64.deb";
+            hash = "sha256-Jsefygf1o1fmKp79VNNSJPyu9PdFYDbEfx7oI+OHMfM=";
+          };
+          debMpc = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/m/mpclib3/libmpc3_1.3.1-3_arm64.deb";
+            hash = "sha256-hVtm3VKyATQnanpkPoiNM8ndo8eX77PJbMzEC/wGC20=";
+          };
+          debZstd = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-4_arm64.deb";
+            hash = "sha256-6Z5uJE1sgPHI6Wy2i7BL/8aEixLj3MWjX2p3XkMy6TY=";
+          };
+          debStdCpp = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/libstdc++6_14.2.0-19_arm64.deb";
+            hash = "sha256-ZmmwxSoufGr5rf2rzj/24oYGXN+8e4UoCGK195na6+4=";
+          };
+          debGccS = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/libgcc-s1_14.2.0-19_arm64.deb";
+            hash = "sha256-EQi8h4eYM9bZoUXyKkoVzds04GW0tfS5e+5YatusKFE=";
+          };
+          debBinutils = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/b/binutils/binutils-aarch64-linux-gnu_2.47.50.20260901-1_arm64.deb";
+            hash = "sha256-YCUeHPGjazE+lvQp9RL3OpI0qiixcvnYTS4aQSIVUes=";
+          };
+          debLibgccDev = pkgs.fetchurl {
+            url = "http://ftp.debian.org/debian/pool/main/g/gcc-14/libgcc-14-dev_14.2.0-19_arm64.deb";
+            hash = "sha256-ZLjrxxgqaaqVJd9uq15+uEm5R+NQ2CFUn4qKPpsZ5bo=";
+          };
+
+
+          # THROWAWAY bisect control #7: pristine upstream binutils 2.44
+          # (no nixpkgs patches) for as/ld/nm/objcopy. Hydra binutils carry
+          # the nixpkgs patchset; this isolates assembler/linker patching
+          # from everything else. Delete with the bisect.
+          upstreamBinutils = pkgs.stdenv.mkDerivation {
+            pname = "binutils-upstream";
+            version = "2.44";
+            src = pkgs.fetchurl {
+              url = "https://ftp.gnu.org/gnu/binutils/binutils-2.44.tar.xz";
+              hash = "sha256-ziAX4FnWPmfduSQOnU7EnCiTYFA1zWDpKtUxd/Q3cjc=";
+            };
+            configureFlags = [
+              "--disable-werror"
+              "--disable-nls"
+              "--disable-gdb"
+              "--disable-jansson"
+              "--enable-deterministic-archives"
+            ];
+            buildPhase = "make -j$NIX_BUILD_CORES all-binutils all-gas all-ld";
+            installPhase = ''
+              make install-binutils install-gas install-ld
+            '';
+            # only the binutils tools are wanted; drop the info dir spam
+            postInstall = ''
+              rm -rf $out/share
+            '';
+          };
+          plainRootlessUpstreamBinutils = pkgs.stdenv.mkDerivation {
+            pname = "linux-plain-rootless-upstream-binutils";
+            version = base.kernelVersion;
+            src = kernelSourceTreeForGcc13;
+            nativeBuildInputs = with pkgs; [ gnumake bison flex bc perl pkg-config openssl gcc ];
+            postPatch = ''
+              patchShebangs scripts/
+            '';
+            dontConfigure = true;
+            buildPhase = ''
+              runHook preBuild
+              export ARCH=arm64
+              cp ${rootless.passthru.configfile} .config
+              chmod u+w .config
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc olddefconfig
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc \
+                AS="${upstreamBinutils}/bin/as" \
+                LD="${upstreamBinutils}/bin/ld.bfd" \
+                NM="${upstreamBinutils}/bin/nm" \
+                OBJCOPY="${upstreamBinutils}/bin/objcopy" \
+                OBJDUMP="${upstreamBinutils}/bin/objdump" \
+                AR="${upstreamBinutils}/bin/ar" \
+                STRIP="${upstreamBinutils}/bin/strip" \
+                Image
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp arch/arm64/boot/Image $out/Image
+              cp .config $out/config
+              runHook postInstall
+            '';
+          };
+
+          # THROWAWAY bisect control #6: the rootless config, plain recipe,
+          # nixpkgs gcc (hydra cc1) but DEBIAN's as/ld/nm/objcopy. Isolates
+          # the assembler/linker from the compiler. Delete with the bisect.
+          plainRootlessDebBinutils = pkgs.stdenv.mkDerivation {
+            pname = "linux-plain-rootless-deb-binutils";
+            version = base.kernelVersion;
+            src = kernelSourceTreeForGcc13;
+            nativeBuildInputs = with pkgs; [ gnumake bison flex bc perl pkg-config openssl gcc ];
+            postPatch = ''
+              patchShebangs scripts/
+            '';
+            dontConfigure = true;
+            buildPhase = ''
+              runHook preBuild
+              export ARCH=arm64
+              cp ${rootless.passthru.configfile} .config
+              chmod u+w .config
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc olddefconfig
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc \
+                AS="${debianGcc}/usr/bin/aarch64-linux-gnu-as" \
+                LD="${debianGcc}/usr/bin/aarch64-linux-gnu-ld.bfd" \
+                NM="${debianGcc}/usr/bin/aarch64-linux-gnu-nm" \
+                OBJCOPY="${debianGcc}/usr/bin/aarch64-linux-gnu-objcopy" \
+                OBJDUMP="${debianGcc}/usr/bin/aarch64-linux-gnu-objdump" \
+                AR="${debianGcc}/usr/bin/aarch64-linux-gnu-ar" \
+                STRIP="${debianGcc}/usr/bin/aarch64-linux-gnu-strip" \
+                Image
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp arch/arm64/boot/Image $out/Image
+              cp .config $out/config
+              runHook postInstall
+            '';
+          };
+
+          plainRootlessDebGcc = pkgs.stdenv.mkDerivation {
+            pname = "linux-plain-rootless-deb-gcc";
+            version = base.kernelVersion;
+            src = kernelSourceTreeForGcc13;
+            nativeBuildInputs = with pkgs; [ gnumake bison flex bc perl pkg-config openssl gcc ];
+            postPatch = ''
+              patchShebangs scripts/
+            '';
+            dontConfigure = true;
+            buildPhase = ''
+              runHook preBuild
+              export ARCH=arm64
+              cp ${rootless.passthru.configfile} .config
+              chmod u+w .config
+              export LD_LIBRARY_PATH=${debianGcc}/usr/lib/aarch64-linux-gnu:${debianGcc}/lib/aarch64-linux-gnu:${pkgs.gmp}/lib:${pkgs.mpfr}/lib:${pkgs.libmpc}/lib:${pkgs.isl}/lib:${pkgs.zstd}/lib:${pkgs.zlib}/lib:${pkgs.stdenv.cc.cc.lib}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+              DEBCC="${debianGcc}/usr/bin/aarch64-linux-gnu-gcc-14 -B${debianGcc}/usr/libexec/gcc/aarch64-linux-gnu/14/ -B${debianGcc}/usr/lib/gcc/aarch64-linux-gnu/14/ -B${debianGcc}/usr/bin/"
+              echo "== debian gcc probe =="
+              patchelf --print-rpath ${debianGcc}/usr/libexec/gcc/aarch64-linux-gnu/14/cc1 || true
+              ls ${pkgs.isl}/lib/ || true
+              echo 'int main(void){return 0;}' > /tmp/probe.c
+              $DEBCC /tmp/probe.c -o /tmp/probe 2>&1 | tail -20 || true
+              ls -la /tmp/probe 2>/dev/null || echo "PROBE LINK FAILED"
+              echo "== kconfig as-version replication =="
+              ${debianGcc}/usr/bin/aarch64-linux-gnu-gcc-14 -B${debianGcc}/usr/libexec/gcc/aarch64-linux-gnu/14/ -Wa,--version -c -x assembler-with-cpp /dev/null -o /dev/null 2>&1 | head -5
+              echo "as-version rc=$?"
+              echo "== assembler probe =="
+              which as || echo "no as on PATH"
+              as --version 2>&1 | head -2 || true
+              echo 'nop' > /tmp/a.s
+              $DEBCC -c -x assembler /tmp/a.s -o /tmp/a.o 2>&1 | head -10 || true
+              ls -la /tmp/a.o 2>/dev/null || echo "ASM FAILED"
+              make -j$NIX_BUILD_CORES CC="$DEBCC" HOSTCC=gcc olddefconfig
+              make -j$NIX_BUILD_CORES CC="$DEBCC" HOSTCC=gcc Image
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp arch/arm64/boot/Image $out/Image
+              cp .config $out/config
+              runHook postInstall
+            '';
+          };
+
+          # THROWAWAY bisect control #4: the rootless config built by a plain
+          # `make` derivation — no nixpkgs kernel machinery, no CC/LD/AR
+          # overrides, no postPatch, no KBUILD_BUILD_TIMESTAMP, raw gcc from
+          # PATH. Tests the nixpkgs manual-config recipe itself. Delete with
+          # the bisect.
+          plainRootless = pkgs.stdenv.mkDerivation {
+            pname = "linux-plain-rootless";
+            version = base.kernelVersion;
+            src = kernelSourceTreeForGcc13;
+            nativeBuildInputs = with pkgs; [ gnumake bison flex bc perl pkg-config openssl gcc ];
+            postPatch = ''
+              patchShebangs scripts/
+            '';
+            dontConfigure = true;
+            buildPhase = ''
+              runHook preBuild
+              export ARCH=arm64
+              cp ${rootless.passthru.configfile} .config
+              chmod u+w .config
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc olddefconfig
+              make -j$NIX_BUILD_CORES CC=gcc HOSTCC=gcc Image
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp arch/arm64/boot/Image $out/Image
+              cp .config $out/config
+              runHook postInstall
+            '';
+          };
+
           rootlessGcc13 = (pkgs.linuxManualConfig.override {
             stdenv = pkgs.gcc13Stdenv;
           }) {
@@ -251,6 +518,14 @@
           rootless-configfile = rootless.passthru.configfile;
           rootless-gcc13-vmlinux = rootlessGcc13;
           rootless-gcc13-configfile = rootless.passthru.configfile;
+          plain-rootless-vmlinux = plainRootless;
+          plain-rootless-configfile = plainRootless.configfile or (pkgs.runCommand "plain-rootless-config" { } "cp ${plainRootless}/config $out");
+          plain-deb-gcc-vmlinux = plainRootlessDebGcc;
+          plain-deb-binutils-vmlinux = plainRootlessDebBinutils;
+          plain-upstream-binutils-vmlinux = plainRootlessUpstreamBinutils;
+          plain-upstream-binutils-configfile = pkgs.runCommand "plain-upstream-binutils-config" { } "cp ${plainRootlessUpstreamBinutils}/config $out";
+          plain-deb-binutils-configfile = pkgs.runCommand "plain-deb-binutils-config" { } "cp ${plainRootlessDebBinutils}/config $out";
+          plain-deb-gcc-configfile = pkgs.runCommand "plain-deb-gcc-config" { } "cp ${plainRootlessDebGcc}/config $out";
           datapath-configfile = datapath.passthru.configfile;
           builder-configfile = builder.passthru.configfile;
           resolved-configs = resolvedConfigs;
