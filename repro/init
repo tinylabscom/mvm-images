@@ -4,16 +4,16 @@
 /bin/busybox --install -s /bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
-insmod /mods/virtio.ko 2>/dev/null
-insmod /mods/virtio_ring.ko 2>/dev/null
-insmod /mods/virtio_pci_modern_dev.ko 2>/dev/null
-insmod /mods/virtio_pci_legacy_dev.ko 2>/dev/null
-insmod /mods/virtio_pci.ko 2>/dev/null
-insmod /mods/virtio_blk.ko 2>/dev/null
-insmod /mods/crc16.ko 2>/dev/null
-insmod /mods/mbcache.ko 2>/dev/null
-insmod /mods/jbd2.ko 2>/dev/null
-insmod /mods/ext4.ko 2>/dev/null
+insmod /mods/virtio.ko
+insmod /mods/virtio_ring.ko
+insmod /mods/virtio_pci_modern_dev.ko
+insmod /mods/virtio_pci_legacy_dev.ko
+insmod /mods/virtio_pci.ko
+insmod /mods/virtio_blk.ko
+insmod /mods/crc16.ko
+insmod /mods/mbcache.ko
+insmod /mods/jbd2.ko
+insmod /mods/ext4.ko
 sleep 1
 mount -t devtmpfs devtmpfs /dev
 mount -t ext4 -o rw /dev/vda /newroot
