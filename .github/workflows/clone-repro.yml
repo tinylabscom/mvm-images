@@ -53,6 +53,7 @@ jobs:
           mkdir -p /tmp/ir/mods
           for m in virtio virtio_ring virtio_blk ext4 jbd2 mbcache crc16; do
             src=$(find usr/lib/modules lib/modules -name "$m.ko*" 2>/dev/null | head -1)
+            [ -n "$src" ] || continue
             xz -dc "$src" > "/tmp/ir/mods/$m.ko"
           done
       - name: build initramfs
@@ -90,7 +91,8 @@ jobs:
           cd /tmp && mkdir -p k61 && cd k61 && ar x /tmp/k61.deb data.tar.xz && tar xf data.tar.xz
           cp boot/vmlinuz-6.1.0-52-arm64 /tmp/deb61-vmlinuz
           for m in virtio virtio_ring virtio_blk ext4 jbd2 mbcache crc16; do
-            src=$(find . -path "*lib/modules*" -name "$m.ko*" | head -1)
+            src=$(find . -path "*lib/modules*" -name "$m.ko*" 2>/dev/null | head -1)
+            [ -n "$src" ] || continue
             case "$src" in
               *.xz) xz -dc "$src" > "/tmp/ir/mods/$m.ko" ;;
               *.zst) zstd -dc "$src" > "/tmp/ir/mods/$m.ko" ;;
