@@ -4,6 +4,8 @@
 /bin/busybox --install -s /bin
 mount -t proc proc /proc
 mount -t sysfs sys /sys
+insmod /mods/virtio.ko 2>/dev/null
+insmod /mods/virtio_ring.ko 2>/dev/null
 insmod /mods/virtio_blk.ko 2>/dev/null
 insmod /mods/crc16.ko 2>/dev/null
 insmod /mods/mbcache.ko 2>/dev/null
