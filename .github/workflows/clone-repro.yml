@@ -129,6 +129,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 cpio xz-utils e2fsprogs wget
+          ls -la /dev/kvm || true
+          sudo chmod 666 /dev/kvm || true
       - name: fetch userspace + kernel
         run: |
           mkdir -p /tmp/ir/bin /tmp/ir/mods /tmp/ir/proc /tmp/ir/sys /tmp/ir/newroot /tmp/ir/dev \
