@@ -29,10 +29,13 @@ jobs:
           wget -q "http://ftp.debian.org/debian/pool/main/b/busybox/busybox-static_1.38.0-3+b1_arm64.deb" -O /tmp/bb.deb
           ar x /tmp/bb.deb data.tar.xz && tar xf data.tar.xz ./usr/bin/busybox
           cp usr/bin/busybox /tmp/ir/bin/busybox
+          cp usr/bin/busybox /tmp/rfs/bin/busybox
+          for a in sh mount unshare echo poweroff true cat ls; do
+            ln -sf busybox "/tmp/rfs/bin/$a"
+          done
           # same k3s version as the template, upstream release binary
           wget -q "https://github.com/k3s-io/k3s/releases/download/v1.34.5%2Bk3s1/k3s-arm64" -O /tmp/rfs/usr/local/bin/k3s
           chmod +x /tmp/rfs/usr/local/bin/k3s
-          ln -s busybox /tmp/rfs/bin/sh
           # k3s is dynamically linked: stage the aarch64 glibc loader + libs
           cp /lib/ld-linux-aarch64.so.1 /tmp/rfs/lib/
           for l in libc.so.6 libresolv.so.2 libnss_dns.so.2 libnss_files.so.2 libz.so.1; do
