@@ -45,6 +45,18 @@ jobs:
       - name: build rootfs
         run: |
           mke2fs -t ext4 -q -F -d /tmp/rfs /tmp/rootfs.ext4 512M
+          # Debian 6.18.15 control kernel (extract vmlinuz + ext4/virtio modules)
+          wget -q "http://ftp.debian.org/debian/pool/main/l/linux/linux-image-6.18.15+deb13-arm64-unsigned_6.18.15-1~bpo13+1_arm64.deb" -O /tmp/k.deb
+          cd /tmp && ar x k.deb data.tar.xz && tar xf data.tar.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/drivers/block/virtio_blk.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/ext4/ext4.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/jbd2/jbd2.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/fs/mbcache.ko.xz ./usr/lib/modules/6.18.15+deb13-arm64/kernel/lib/crc/crc16.ko.xz ./boot/vmlinuz-6.18.15+deb13-arm64
+          cp boot/vmlinuz-6.18.15+deb13-arm64 /tmp/deb-vmlinuz
+          for m in virtio_blk ext4 jbd2 mbcache crc16; do
+            xz -dc usr/lib/modules/6.18.15+deb13-arm64/kernel/*/*/$m.ko.xz 2>/dev/null | gzip > /tmp/x 2>/dev/null || true
+          done
+          # modules must be uncompressed .ko for busybox insmod
+          mkdir -p /tmp/ir/mods
+          for m in "drivers/block/virtio_blk" "fs/ext4/ext4" "fs/jbd2/jbd2" "fs/mbcache" "lib/crc/crc16"; do
+            xz -dc "usr/lib/modules/6.18.15+deb13-arm64/kernel/$m.ko.xz" > "/tmp/ir/mods/$(basename $m).ko"
+          done
       - name: build initramfs
         run: |
           cp repro/init /tmp/ir/init
@@ -56,10 +68,10 @@ jobs:
           set -u
           mkdir -p /tmp/logs
           run_case() {
-            name="$1"; kernel="$2"; acc="$3"; cpu="$4"
+            name="$1"; kernel="$2"; acc="$3"; cpu="$4"; extra="${5:-}"; smp="${6:-2}"
             log="/tmp/logs/${name}.log"
             timeout 120 qemu-system-aarch64 \
-              -machine virt,accel="$acc" -cpu "$cpu" -smp 2 -m 2048 \
+              $extra -machine virt,accel="$acc" -cpu "$cpu" -smp "$smp" -m 2048 \
               -kernel "$kernel" -initrd /tmp/probe-initramfs.cpio.gz \
               -append "console=ttyAMA0 rdinit=/init panic=-1" \
               -drive file=/tmp/rootfs.ext4,format=raw,if=virtio,snapshot=on \
@@ -69,9 +81,12 @@ jobs:
             else verdict="INCONCLUSIVE"; fi
             echo "${name}: ${verdict}"
           }
-          run_case mvm-rootless-kvm-host repro/vmlinux-rootless kvm host
-          run_case mvm-rootless-tcg-max  repro/vmlinux-rootless tcg max
-          run_case mvm-rootless-tcg-a57  repro/vmlinux-rootless tcg cortex-a57
+          run_case mvm-rootless-tcg-max   repro/vmlinux-rootless tcg max
+          run_case mvm-rootless-tcg-a57   repro/vmlinux-rootless tcg cortex-a57
+          run_case mvm-rootless-tcg-gic2  repro/vmlinux-rootless tcg max "-machine virt,gic-version=2" 2
+          run_case mvm-rootless-tcg-smp1  repro/vmlinux-rootless tcg max "" 1
+          run_case mvm-rootless-tcg-oldm  repro/vmlinux-rootless tcg max "-machine virt-6.0" 2
+          run_case debian-kernel-tcg      /tmp/deb-vmlinuz tcg max
       - name: upload logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
