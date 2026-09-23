@@ -51,7 +51,7 @@ jobs:
           cp boot/vmlinuz-6.18.15+deb13-arm64 /tmp/deb-vmlinuz
           # modules must be uncompressed .ko for busybox insmod
           mkdir -p /tmp/ir/mods
-          for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_blk crc32c ext4 jbd2 mbcache crc16; do
+          for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_blk crc32c crc32c_generic ext4 jbd2 mbcache crc16; do
             src=$(find usr/lib/modules lib/modules -name "$m.ko*" 2>/dev/null | head -1)
             [ -n "$src" ] || continue
             xz -dc "$src" > "/tmp/ir/mods/$m.ko"
@@ -61,7 +61,7 @@ jobs:
           cd /tmp && mkdir -p k61 && cd k61 && ar x /tmp/k61.deb data.tar.xz && tar xf data.tar.xz
           cp boot/vmlinuz-6.1.0-52-arm64 /tmp/deb61-vmlinuz
           mkdir -p /tmp/ir61/mods
-          for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_blk crc32c ext4 jbd2 mbcache crc16; do
+          for m in virtio virtio_ring virtio_pci_modern_dev virtio_pci_legacy_dev virtio_pci virtio_blk crc32c crc32c_generic ext4 jbd2 mbcache crc16; do
             src=$(find . -path "*lib/modules*" -name "$m.ko*" 2>/dev/null | head -1)
             [ -n "$src" ] || continue
             case "$src" in
