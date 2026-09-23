@@ -75,13 +75,21 @@ host-binaries mvm_checkout="" target=arch:
 builder-vm mvm_checkout="" target=arch:
     #!/usr/bin/env bash
     set -euo pipefail
+    toolchain_prefix="$HOME/.local/mvm-images"
+    install_args=()
     if [ -n "{{mvm_checkout}}" ]; then
         mvm="$(cd '{{mvm_checkout}}' && pwd -P)"
-        scripts/install-host-toolchain.sh --mvm-checkout "$mvm"
+        install_args=(--mvm-checkout "$mvm")
+    fi
+    scripts/install-host-toolchain.sh "${install_args[@]}" "$toolchain_prefix"
+    # The installer runs as a child process, so its local path changes cannot
+    # affect this recipe. Prefer the exact Zig it just installed over any
+    # system/Homebrew Zig that appears earlier on the caller's PATH.
+    export PATH="$toolchain_prefix/bin:$PATH"
+    if [ -n "{{mvm_checkout}}" ]; then
         bins="$(scripts/build-host-binaries.sh --mvm-checkout "$mvm" '{{target}}' | tee /dev/stderr | sed -n 's/^MVM_HOST_BIN_DIR=//p' | tail -1)"
         MVM_HOST_BIN_DIR="$bins" nix build ".#legacyPackages.{{system}}.builder-vm.default" --impure --override-input mvm "path:$mvm"
     else
-        scripts/install-host-toolchain.sh
         bins="$(scripts/build-host-binaries.sh '{{target}}' | tee /dev/stderr | sed -n 's/^MVM_HOST_BIN_DIR=//p' | tail -1)"
         MVM_HOST_BIN_DIR="$bins" nix build ".#legacyPackages.{{system}}.builder-vm.default" --impure
     fi
