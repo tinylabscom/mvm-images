@@ -9,6 +9,7 @@ insmod /mods/virtio_ring.ko
 insmod /mods/virtio_pci_modern_dev.ko
 insmod /mods/virtio_pci_legacy_dev.ko
 insmod /mods/virtio_pci.ko
+insmod /mods/crc32c.ko
 insmod /mods/virtio_blk.ko
 insmod /mods/crc16.ko
 insmod /mods/mbcache.ko
