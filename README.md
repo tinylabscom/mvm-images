@@ -284,6 +284,11 @@ The optional final arguments select a system or pass Nix flags—for example,
 outputs require the explicit `--impure` shown above; `just builder-vm` and the
 complete-build aliases set their own required flags.
 
+`just builder-vm` and the complete-build aliases also install the exact Zig
+version pinned by the selected `mvm` source under
+`~/.local/mvm-images/bin` and prefer it for that build. They do not replace a
+Homebrew or system Zig, and no manual `PATH` adjustment is required.
+
 `MVM_WORKSPACE_PATH` must be unset; the flake refuses to evaluate with it,
 because `mvm`'s `nix/flake.nix` would otherwise build from whatever checkout it
 names. If Nix has a GitHub token configured that the `tinylabscom` organisation
