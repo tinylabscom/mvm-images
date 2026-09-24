@@ -7,7 +7,7 @@
 name: clone-repro-external
 on:
   push:
-    branches: [feat/datapath-kernel]
+    branches: [feat/datapath-kernel, wip/clone-repro-harness]
   workflow_dispatch:
 permissions:
   contents: read
