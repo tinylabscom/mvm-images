@@ -203,7 +203,8 @@ exact set they were built against.
   `scripts/check-action-pins.sh` refuses anything else on every pull request.
 - Report a suspected compromise of a published artifact or signing identity as
   described in [SECURITY.md](SECURITY.md). Response is to publish revocation
-  metadata and a superseding set, then move consumers by lock update.
+  metadata and a superseding set, then move consumers by lock update. Format,
+  signer identity, and procedure: [REVOCATIONS.md](REVOCATIONS.md).
 
 ## Layout
 

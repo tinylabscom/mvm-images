@@ -14,7 +14,7 @@ against [tinylabscom/mvm](https://github.com/tinylabscom/mvm) instead.
 - Bytes published by this repository's releases.
 - The manifest, its signature, and the checksum documents that cover an image set.
 - The workflows that build, sign, and publish them, and their permissions.
-- The revocation channel.
+- [The revocation channel](REVOCATIONS.md).
 
 ## What we guarantee about published artifacts
 
@@ -28,7 +28,7 @@ against [tinylabscom/mvm](https://github.com/tinylabscom/mvm) instead.
 
 ## Handling a compromised set
 
-1. Publish revocation metadata naming the affected set.
+1. Publish revocation metadata naming the affected set ([REVOCATIONS.md](REVOCATIONS.md)). The channel format, signer identity, and renewal cadence are documented there.
 2. Publish a superseding set built from reviewed inputs.
 3. Move consumers by updating the image lock in `mvm`, through review.
 
