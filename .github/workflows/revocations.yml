@@ -1,0 +1,96 @@
+name: Publish revocation list
+
+# The revocation channel named by every image-set manifest is a GitHub
+# Release asset pair: revocations.json plus its cosign bundle. This workflow
+# is the only path that writes it. It runs on a manual dispatch so that
+# publishing revocation metadata — including the empty list that keeps a
+# fresh consumer from failing on a missing channel — is a deliberate,
+# reviewed act, gated by the same protected environment that signs image
+# sets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: revocations
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: image-release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Refuse to publish from outside main
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = main
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "::error::revocation publish requested for a commit outside main"
+            exit 1
+          }
+      - name: Validate the checked-in list before signing
+        run: |
+          set -euo pipefail
+          jq -e '
+            .schema_version == 1 and
+            (.revocations | type == "array") and
+            (.not_after | fromdateiso8601 > now)
+          ' revocations/revocations.json >/dev/null || {
+            echo "::error::revocations/revocations.json is malformed or already stale"
+            exit 1
+          }
+      - name: Install pinned Nix and cosign
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Install the pinned cosign
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          nix profile install "github:NixOS/nixpkgs/${nixpkgs_rev}#cosign"
+      - name: Sign the revocation list
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          cosign sign-blob \
+            --yes \
+            --new-bundle-format \
+            --bundle revocations/revocations.json.bundle \
+            revocations/revocations.json
+      - name: Publish the channel assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view revocations >/dev/null 2>&1; then
+            gh release upload revocations \
+              revocations/revocations.json \
+              revocations/revocations.json.bundle \
+              --clobber
+          else
+            gh release create revocations \
+              revocations/revocations.json \
+              revocations/revocations.json.bundle \
+              --title "mvm image revocation channel" \
+              --notes "Producer-signed pack revocation list. Format and \
+              procedure: REVOCATIONS.md in this repository."
+          fi
+      - name: Record the signer identity
+        run: |
+          {
+            echo "Signer identity for this publication:"
+            echo "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/revocations.yml@refs/heads/main"
+            echo "issued_at: $(jq -r .issued_at revocations/revocations.json)"
+            echo "not_after: $(jq -r .not_after revocations/revocations.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
