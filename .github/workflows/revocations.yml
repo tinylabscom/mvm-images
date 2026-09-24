@@ -2,16 +2,22 @@ name: Publish revocation list
 
 # The revocation channel named by every image-set manifest is a GitHub
 # Release asset pair: revocations.json plus its cosign bundle. This workflow
-# is the only path that writes it. It runs from a protected revocations/v*
-# tag exactly like image-set releases, so publishing revocation metadata —
-# including the empty list that keeps a fresh consumer from failing on a
-# missing channel — is a deliberate, reviewed act, gated by the same
-# protected environment and the same main-only ancestry rule as image-set
-# signing. The keyless identity is therefore bound to the exact tag.
+# is the only path that writes it. It runs from a protected
+# revocation-list/v* tag exactly like image-set releases, so publishing
+# revocation metadata — including the empty list that keeps a fresh consumer
+# from failing on a missing channel — is a deliberate, reviewed act, gated by
+# the same protected environment and the same main-only ancestry rule as
+# image-set signing. The keyless identity is therefore bound to the exact tag.
+#
+# The signing tags must not live under `revocations/`: the channel release is
+# tagged `revocations` (every signed manifest names
+# releases/download/revocations/...), and git cannot hold both
+# refs/tags/revocations and refs/tags/revocations/<anything>. The first
+# publication failed exactly there, with an HTTP 500 from release creation.
 on:
   push:
     tags:
-      - revocations/*
+      - revocation-list/*
 
 permissions:
   contents: read
@@ -85,6 +91,7 @@ jobs:
               revocations/revocations.json \
               revocations/revocations.json.bundle \
               --title "mvm image revocation channel" \
+              --latest=false \
               --notes "Producer-signed pack revocation list. Format and \
               procedure: REVOCATIONS.md in this repository."
           fi
