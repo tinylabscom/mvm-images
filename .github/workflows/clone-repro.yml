@@ -99,10 +99,10 @@ jobs:
           set -u
           mkdir -p /tmp/logs
           run_case() {
-            name="$1"; kernel="$2"; acc="$3"; cpu="$4"; smp="${5:-2}"; extra="${6:-}"; initrd="${7:-/tmp/probe-mvm.cpio.gz}"
+            name="$1"; kernel="$2"; acc="$3"; cpu="$4"; smp="${5:-2}"; extra="${6:-}"; initrd="${7:-/tmp/probe-mvm.cpio.gz}"; mem="${8:-2048}"
             log="/tmp/logs/${name}.log"
             timeout 120 qemu-system-aarch64 \
-              $extra -machine virt,accel="$acc" -cpu "$cpu" -smp "$smp" -m 2048 \
+              $extra -machine virt,accel="$acc" -cpu "$cpu" -smp "$smp" -m "$mem" \
               -kernel "$kernel" -initrd "$initrd" \
               -append "console=ttyAMA0 rdinit=/init panic=-1" \
               -drive file=/tmp/rootfs.ext4,format=raw,if=virtio,snapshot=on \
@@ -120,7 +120,7 @@ jobs:
           run_case debian-kernel-tcg      /tmp/deb-vmlinuz tcg max 2 "" /tmp/probe-deb18.cpio.gz
           run_case debian-6.1-tcg         /tmp/deb61-vmlinuz tcg max 2 "" /tmp/probe-deb61.cpio.gz
           # precondition hunt: what shape protects conventional VMs?
-          run_case mvm-rootless-tcg-big    repro/vmlinux-rootless tcg max 8 "" /tmp/probe-mvm.cpio.gz
+          run_case mvm-rootless-tcg-big    repro/vmlinux-rootless tcg max 8 "" /tmp/probe-mvm.cpio.gz 8192
           run_case mvm-rootless-tcg-mid    repro/vmlinux-rootless tcg max 4 "" /tmp/probe-mvm.cpio.gz
           run_case mvm-rootless-tcg-cgroup repro/vmlinux-rootless tcg max 2 "" /tmp/probe-cg.cpio.gz
       - name: upload logs
