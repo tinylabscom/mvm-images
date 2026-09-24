@@ -1,0 +1,39 @@
+#!/bin/busybox sh
+# Precondition probe: same switch_root harness, but the repro process runs
+# inside a mounted-and-populated cgroup v2 hierarchy (delegated subtree with
+# controllers) before unsharing. Tests whether a real cgroup setup is the
+# precondition that protects conventional VMs.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+insmod /mods/virtio.ko 2>/dev/null
+insmod /mods/virtio_ring.ko 2>/dev/null
+insmod /mods/virtio_pci_modern_dev.ko 2>/dev/null
+insmod /mods/virtio_pci_legacy_dev.ko 2>/dev/null
+insmod /mods/virtio_pci.ko 2>/dev/null
+insmod /mods/crc32c.ko 2>/dev/null || insmod /mods/crc32c_generic.ko
+insmod /mods/virtio_blk.ko 2>/dev/null
+sleep 1
+mount -t devtmpfs devtmpfs /dev
+mount -t ext4 -o rw /dev/vda /newroot
+cat > /newroot/probe.sh <<'PROBE'
+#!/bin/sh
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mkdir -p /sys/fs/cgroup
+mount -t cgroup2 none /sys/fs/cgroup
+mkdir -p /sys/fs/cgroup/mvm
+echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null
+echo "+cpu +memory +pids" > /sys/fs/cgroup/mvm/cgroup.subtree_control 2>/dev/null
+echo $$ > /sys/fs/cgroup/mvm/cgroup.procs
+echo CGROUP_MARK
+cat /proc/self/cgroup
+echo AAA
+unshare -Urmp sh -c 'for i in 1 2 3 4 5 6 7 8; do (true) 2>/dev/null || echo -n F; done; echo; echo STORM_DONE'
+unshare -Urmp /usr/local/bin/k3s --version 2>&1 | head -2
+echo BBB
+poweroff -f
+PROBE
+chmod +x /newroot/probe.sh
+echo ===SWITCH===
+exec switch_root /newroot /bin/sh /probe.sh
