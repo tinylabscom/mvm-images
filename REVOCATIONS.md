@@ -26,12 +26,12 @@ The only identity pattern under which this repository signs a revocation
 list:
 
 ```
-https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocations/v<N>
+https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocation-list/v<N>
 ```
 
 Issuer: `https://token.actions.githubusercontent.com` (Sigstore keyless OIDC).
 
-Each publication is signed from a protected `revocations/v*` tag, exactly like
+Each publication is signed from a protected `revocation-list/v*` tag, exactly like
 an image-set release: the tag must name a commit on `main`, the signing job
 runs in the protected `image-release` environment, and the environment's
 reviewer must approve the deployment. A dispatch, branch push, or
@@ -85,13 +85,13 @@ publish or renew:
    `issued_at`/`not_after` pair). The workflow refuses to sign a stale list,
    so renewal cannot be skipped.
 2. Merge through the merge queue.
-3. Push the next `revocations/v<N>` tag naming the merged commit, mirroring
+3. Push the next `revocation-list/v<N>` tag naming the merged commit, mirroring
    `just release` for image sets. The tag trigger signs the list keyless in
    the protected environment and replaces the two channel assets on the
    `revocations` release.
 
 The tag binds the signer identity: consumers verify the bundle against the
-exact `revocations/v<N>` identity, and the environment's deployment reviewer
+exact `revocation-list/v<N>` identity, and the environment's deployment reviewer
 approves each publication.
 
 ## Revoking a set
@@ -110,7 +110,7 @@ curl -fLO https://github.com/tinylabscom/mvm-images/releases/download/revocation
 curl -fLO https://github.com/tinylabscom/mvm-images/releases/download/revocations/revocations.json.bundle
 cosign verify-blob \
   --bundle revocations.json.bundle \
-  --certificate-identity "https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocations/v1" \
+  --certificate-identity "https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocation-list/v1" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   revocations.json
 ```
@@ -118,5 +118,11 @@ cosign verify-blob \
 ## Current state
 
 The channel's first publication is an empty list (`revocations: []`),
-issued 2026-09-24, valid 45 days, published from tag `revocations/v1`. No
+issued 2026-09-24, valid 45 days, published from tag `revocation-list/v1`. No
 image set, signer, or pack is currently revoked.
+
+The first attempt, from a `revocations/v1` tag, signed the list and then
+failed to create the `revocations` release: the tag `refs/tags/revocations/v1`
+occupied the namespace the release's own `revocations` tag needs. That tag
+produced no published asset and was deleted; signing tags use the
+`revocation-list/` prefix so the two can never collide again.
