@@ -8,11 +8,14 @@ diverged from mvm can be told apart from one that was changed on purpose.
 ## The pin
 
 All copies were taken at mvm commit
-`1f2db79b319c8e74be5e09eeb337fac6d2ddf788`, advanced from
-`e97eea9ace29d831ee0c755fef758d7e289ca831` so the pin also carries the
+`5460c6e11298082e754ce9433df9af9f61de71d5`, advanced from
+`1f2db79b319c8e74be5e09eeb337fac6d2ddf788` (itself advanced from
+`e97eea9ace29d831ee0c755fef758d7e289ca831`). The later pins carry the
 follow-up that builds the GPU shims' musl variant without bootstrapping a
-musl Rust/LLVM toolchain (tinylabscom/mvm#3617); the earlier pin's musl
-stdenv rebuilt rustc from uncached sources on the image builders. The
+musl Rust/LLVM toolchain (tinylabscom/mvm#3617; the earlier pin's musl
+stdenv rebuilt rustc from uncached sources on the image builders) and the
+no-op soname-rename guard the first full overlay build exposed
+(tinylabscom/mvm#3650). The
 `e97eea9a` pin brought the runtime
 overlay to parity with mvm's builders — the mediated `ping` binary joins the
 staged set and the read-only overlay drops its ext4 journal to stay inside
