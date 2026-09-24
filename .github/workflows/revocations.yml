@@ -2,13 +2,16 @@ name: Publish revocation list
 
 # The revocation channel named by every image-set manifest is a GitHub
 # Release asset pair: revocations.json plus its cosign bundle. This workflow
-# is the only path that writes it. It runs on a manual dispatch so that
-# publishing revocation metadata — including the empty list that keeps a
-# fresh consumer from failing on a missing channel — is a deliberate,
-# reviewed act, gated by the same protected environment that signs image
-# sets.
+# is the only path that writes it. It runs from a protected revocations/v*
+# tag exactly like image-set releases, so publishing revocation metadata —
+# including the empty list that keeps a fresh consumer from failing on a
+# missing channel — is a deliberate, reviewed act, gated by the same
+# protected environment and the same main-only ancestry rule as image-set
+# signing. The keyless identity is therefore bound to the exact tag.
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - revocations/*
 
 permissions:
   contents: read
@@ -31,13 +34,12 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: Refuse to publish from outside main
+      - name: Refuse a revocation tag outside main
         run: |
           set -euo pipefail
-          test "$GITHUB_REF_NAME" = main
           git fetch --no-tags origin main
           git merge-base --is-ancestor HEAD origin/main || {
-            echo "::error::revocation publish requested for a commit outside main"
+            echo "::error::revocation tag ${GITHUB_REF_NAME} does not point to a commit on main"
             exit 1
           }
       - name: Validate the checked-in list before signing
@@ -90,7 +92,7 @@ jobs:
         run: |
           {
             echo "Signer identity for this publication:"
-            echo "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/revocations.yml@refs/heads/main"
+            echo "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/revocations.yml@refs/tags/${GITHUB_REF_NAME}"
             echo "issued_at: $(jq -r .issued_at revocations/revocations.json)"
             echo "not_after: $(jq -r .not_after revocations/revocations.json)"
           } >> "$GITHUB_STEP_SUMMARY"

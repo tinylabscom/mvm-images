@@ -22,22 +22,25 @@ verification remains possible; it just stops being admitted.
 
 ## Signer identity
 
-The only identity under which this repository signs a revocation list:
+The only identity pattern under which this repository signs a revocation
+list:
 
 ```
-https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/heads/main
+https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocations/v<N>
 ```
 
 Issuer: `https://token.actions.githubusercontent.com` (Sigstore keyless OIDC).
 
-The signing job runs in the protected `image-release` environment, from the
-`main` branch only, through the manual `Publish revocation list` workflow
-(`.github/workflows/revocations.yml`). An on-push or pull-request run cannot
-mint this identity: the environment gate requires the same approval that
-guards image-set signing.
+Each publication is signed from a protected `revocations/v*` tag, exactly like
+an image-set release: the tag must name a commit on `main`, the signing job
+runs in the protected `image-release` environment, and the environment's
+reviewer must approve the deployment. A dispatch, branch push, or
+pull-request run cannot mint this identity — the first publication attempt
+from `main` was rejected by the environment's branch policy in under a
+second, before any step ran.
 
-Consumers must pin this exact identity for the channel — a revocation list
-signed by any other workflow, branch, or repository must be refused.
+Consumers pin the exact tag identity of the list they fetched — a revocation
+list signed by any other workflow, tag, or repository must be refused.
 
 ## List format (schema version 1)
 
@@ -82,10 +85,14 @@ publish or renew:
    `issued_at`/`not_after` pair). The workflow refuses to sign a stale list,
    so renewal cannot be skipped.
 2. Merge through the merge queue.
-3. Run the `Publish revocation list` workflow manually against `main`.
+3. Push the next `revocations/v<N>` tag naming the merged commit, mirroring
+   `just release` for image sets. The tag trigger signs the list keyless in
+   the protected environment and replaces the two channel assets on the
+   `revocations` release.
 
-The workflow validates the list, signs it in the protected environment, and
-replaces the two channel assets on the `revocations` release.
+The tag binds the signer identity: consumers verify the bundle against the
+exact `revocations/v<N>` identity, and the environment's deployment reviewer
+approves each publication.
 
 ## Revoking a set
 
@@ -103,7 +110,7 @@ curl -fLO https://github.com/tinylabscom/mvm-images/releases/download/revocation
 curl -fLO https://github.com/tinylabscom/mvm-images/releases/download/revocations/revocations.json.bundle
 cosign verify-blob \
   --bundle revocations.json.bundle \
-  --certificate-identity "https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/heads/main" \
+  --certificate-identity "https://github.com/tinylabscom/mvm-images/.github/workflows/revocations.yml@refs/tags/revocations/v1" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   revocations.json
 ```
@@ -111,5 +118,5 @@ cosign verify-blob \
 ## Current state
 
 The channel's first publication is an empty list (`revocations: []`),
-issued 2026-09-24, valid 45 days. No image set, signer, or pack is currently
-revoked.
+issued 2026-09-24, valid 45 days, published from tag `revocations/v1`. No
+image set, signer, or pack is currently revoked.
