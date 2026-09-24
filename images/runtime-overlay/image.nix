@@ -405,8 +405,10 @@
             # opportunistically dlopen("libcuda.so.1") never picks the shim up
             # and never dials a GPU endpoint that does not exist.
             mkdir -p "$staging/gpu/glibc" "$staging/gpu/musl"
-            cp ${gpuShimsGlibc}/lib/. "$staging/gpu/glibc/"
-            cp ${gpuShimsMusl}/lib/. "$staging/gpu/musl/"
+            for so in libcuda.so.1 libcudart.so libnvidia-ml.so.1; do
+              cp "${gpuShimsGlibc}/lib/$so" "$staging/gpu/glibc/$so"
+              cp "${gpuShimsMusl}/lib/$so" "$staging/gpu/musl/$so"
+            done
             chmod 0555 "$staging/gpu/glibc"/* "$staging/gpu/musl"/*
 
             # In-guest Python runtime SDK. PYTHONPATH points at
