@@ -24,17 +24,17 @@
     "mvm": {
       "flake": false,
       "locked": {
-        "lastModified": 1790116671,
-        "narHash": "sha256-kec+C/q99mGbkIzmTqOkkG0xqmEwKSDyH2KQIf+ebus=",
+        "lastModified": 1790214364,
+        "narHash": "sha256-kXFzbQv2mGEbTgGgWO616iRjjocDZM8CBfkwco0oa4I=",
         "owner": "tinylabscom",
         "repo": "mvm",
-        "rev": "e97eea9ace29d831ee0c755fef758d7e289ca831",
+        "rev": "1f2db79b319c8e74be5e09eeb337fac6d2ddf788",
         "type": "github"
       },
       "original": {
         "owner": "tinylabscom",
         "repo": "mvm",
-        "rev": "e97eea9ace29d831ee0c755fef758d7e289ca831",
+        "rev": "1f2db79b319c8e74be5e09eeb337fac6d2ddf788",
         "type": "github"
       }
     },
