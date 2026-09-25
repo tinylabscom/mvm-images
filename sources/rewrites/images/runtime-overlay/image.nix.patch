@@ -22,7 +22,22 @@
 +      # The `mvm` source tree at the commit the root flake pins. Everything this
 +      # image reads from `mvm` resolves against it; there is no local override.
 +      workspaceRoot = mvm-src.outPath;
-@@ -144,0 +140,8 @@
+@@ -125,5 +120,8 @@
+-      # mvmctl semver, shared with the universal initramfs. The
+-      # `RuntimeOverlayResolver` rejects an overlay whose VERSION file
+-      # disagrees with the running mvmctl; `../version.nix` says how the
+-      # pin is kept equal to the workspace version.
+-      overlayVersion = import ../version.nix;
++      # mvmctl semver, shared with the universal initramfs and the SDK
++      # sidecar. The `RuntimeOverlayResolver` rejects an overlay whose VERSION
++      # file disagrees with the running mvmctl, so it is read from the pinned
++      # mvm workspace rather than kept by hand: the set is built for exactly
++      # the CLI version it was built from.
++      overlayVersion =
++        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml")))
++        .workspace.package.version;
+@@ -143,0 +142,8 @@
++
 +      # Guest GPU shims (libcuda.so.1 / libcudart.so / libnvidia-ml.so.1) —
 +      # the drop-in CUDA/NVML ABI the guest activation exposes to a workload's
 +      # loader only when the launch armed the GPU plane (mvm.gpu=1). One
@@ -30,8 +45,7 @@
 +      mvmGpuShimsForLibc =
 +        system: libc:
 +        mvm.packages.${system}."mvm-gpu-shims-${libc}";
-+
-@@ -205,12 +208,8 @@
+@@ -205,12 +211,8 @@
 -      # Target overlay size: 16 MiB — a hard cap for the static-musl
 -      # runtime overlay. The SDK glibc closure lives in the separate
 -      # sidecar, so the production overlay no longer needs the old
@@ -52,12 +66,13 @@
 +      # echoes the staged size so this allocation can be tightened when the
 +      # shim sets shrink.
 +      overlaySizeBytes = 24 * 1024 * 1024;
-@@ -353,0 +353,2 @@
+@@ -353,0 +356,2 @@
 +          gpuShimsGlibc = mvmGpuShimsForLibc system "glibc";
 +          gpuShimsMusl = mvmGpuShimsForLibc system "musl";
-@@ -371,0 +373 @@
+@@ -371,0 +376 @@
 +              inherit gpuShimsGlibc gpuShimsMusl;
-@@ -398,0 +401,13 @@
+@@ -397,0 +403,13 @@
++
 +            # Guest GPU shims, one set per libc. Kept off the guest's default
 +            # loader path on purpose: the guest activation prepends
 +            # /mvm/runtime/gpu/<libc> to LD_LIBRARY_PATH only when the boot's
@@ -70,7 +85,6 @@
 +              cp "${gpuShimsMusl}/lib/$so" "$staging/gpu/musl/$so"
 +            done
 +            chmod 0555 "$staging/gpu/glibc"/* "$staging/gpu/musl"/*
-+
-@@ -447 +462 @@
+@@ -447 +465 @@
 -            # output file at the fixed budget (16 MiB) so the size
 +            # output file at the fixed budget (24 MiB) so the size

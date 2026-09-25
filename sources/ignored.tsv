@@ -3,3 +3,4 @@
 # at the pinned commit and accounts for it when scanning nix/images/.
 nix/images/examples/llm-agent/default.nix	Workload-specific example; application and template composition does not belong in the base-image repository.
 nix/images/kernel/workload-k8s.nix	Kubernetes-specific kernel with guest bridge/veth/CNI-oriented facilities; rejected in favor of a generic NIC-less rootless base contract.
+nix/images/version.nix	The artifact VERSION is read from the pinned mvm Cargo.toml [workspace.package].version, so a hand-kept copy has nothing left to pin.
