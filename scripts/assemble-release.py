@@ -139,6 +139,12 @@ def member_specs() -> tuple[Member, ...]:
                     (Artifact(f"sdk-sidecar-{arch}-musl.tar.gz", "tar_gz"),),
                 ),
                 Member(
+                    f"initramfs-{arch}",
+                    "initramfs",
+                    target,
+                    (Artifact(f"initramfs-{arch}.tar.gz", "tar_gz"),),
+                ),
+                Member(
                     f"stage0-bootstrap-kernel-{arch}",
                     "stage0_bootstrap_kernel",
                     target,

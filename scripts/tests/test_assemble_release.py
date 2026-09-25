@@ -80,13 +80,17 @@ class AssembleReleaseTests(unittest.TestCase):
         result = self.run_assembler()
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((self.assets / "image-set.json").read_text())
-        self.assertEqual(len(manifest["members"]), 19)
+        self.assertEqual(len(manifest["members"]), 21)
         self.assertEqual(manifest["set_version"], "0.1.0")
         self.assertEqual(manifest["compatibility"]["guest_agent_protocol"], {"min": 2, "max": 3})
         self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 4)
         for member in ASSEMBLER.member_specs():
             self.assertTrue((self.assets / f"pack-{member.slug}.json").is_file())
             self.assertTrue((self.assets / f"sbom-{member.slug}.spdx.json").is_file())
+        initramfs = [m for m in manifest["members"] if m["role"] == "initramfs"]
+        self.assertEqual(
+            sorted(m["target"]["arch"] for m in initramfs), sorted(ASSEMBLER.ARCHES)
+        )
         for arch in ASSEMBLER.ARCHES:
             self.assertEqual(
                 (self.assets / f"stage0-vmlinux-{arch}").read_bytes(),

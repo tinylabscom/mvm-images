@@ -81,6 +81,7 @@ ROLES = {
     "sdk_sidecar_glibc": ({"sdk_sidecar": "glibc"}, False, False),
     "sdk_sidecar_musl": ({"sdk_sidecar": "musl"}, False, False),
     "stage0_bootstrap_kernel": ("stage0_bootstrap_kernel", True, False),
+    "initramfs": ("initramfs", False, False),
     "qemu_wasm_smoke_pack": ("qemu_wasm_smoke_pack", False, True),
 }
 
