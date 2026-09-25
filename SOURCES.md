@@ -59,7 +59,6 @@ are intentionally not base-image sources and requires a reason for each one.
 | `nix/images/default-tenant/flake.nix` | `images/default-tenant/image.nix` | yes |
 | `nix/images/runtime-overlay/flake.nix` | `images/runtime-overlay/image.nix` | yes |
 | `nix/images/initramfs/flake.nix` | `images/initramfs/image.nix` | yes |
-| `nix/images/version.nix` | `images/version.nix` | no |
 | `nix/images/kernel/{README.md,base.nix,builder.nix,workload.nix,flake.nix,flake.lock}` | `kernel/` | no |
 | `nix/packages/qemu-wasm.nix` | `qemu-wasm/qemu-wasm.nix` | yes |
 | `nix/packages/qemu-wasm-smoke-image.nix` | `qemu-wasm/qemu-wasm-smoke-image.nix` | yes |
@@ -141,6 +140,14 @@ Every change is one of these, and nothing else.
     and never dials a GPU endpoint that does not exist. mvm's own copy of the
     recipe does not stage them; composing the shim sets into the overlay is
     this repository's composition decision (tinylabscom/mvm-images#10).
+12. **The artifact `VERSION` comes from the pinned mvm workspace.**
+    `images/runtime-overlay/image.nix` (overlay and SDK sidecar) and
+    `images/initramfs/image.nix` read `[workspace.package].version` from the
+    pinned mvm `Cargo.toml` instead of importing a `version.nix` kept equal to
+    it by hand. mvm's resolvers refuse a `VERSION` that differs from the
+    running CLI, so a set is built for exactly the CLI version of the mvm
+    commit it pins, and there is no second copy to drift. mvm's own
+    `nix/images/version.nix` is deleted with the rest of its image tree.
 
 ## Deliberately not copied
 

@@ -117,11 +117,14 @@
         mvm-workspace = workspace;
       };
 
-      # mvmctl semver, shared with the universal initramfs. The
-      # `RuntimeOverlayResolver` rejects an overlay whose VERSION file
-      # disagrees with the running mvmctl; `../version.nix` says how the
-      # pin is kept equal to the workspace version.
-      overlayVersion = import ../version.nix;
+      # mvmctl semver, shared with the universal initramfs and the SDK
+      # sidecar. The `RuntimeOverlayResolver` rejects an overlay whose VERSION
+      # file disagrees with the running mvmctl, so it is read from the pinned
+      # mvm workspace rather than kept by hand: the set is built for exactly
+      # the CLI version it was built from.
+      overlayVersion =
+        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml")))
+        .workspace.package.version;
 
       # mvm-agentd binaries — agent + seccomp shim + netinit + OCI entrypoint.
       # The universal initramfs agent is PID 1 and lives in the initramfs, not

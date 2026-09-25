@@ -52,11 +52,12 @@
         })
         { inherit workspaceRoot; };
 
-      # mvmctl semver, the same pin the runtime overlay carries.
-      # `InitramfsResolver` refuses an initramfs whose VERSION differs from
-      # the running mvmctl's; `../version.nix` says how the pin is kept
-      # equal to the workspace version.
-      initramfsVersion = import ../version.nix;
+      # mvmctl semver, read from the pinned mvm workspace exactly as the
+      # runtime overlay reads it. `InitramfsResolver` refuses an initramfs
+      # whose VERSION differs from the running mvmctl's.
+      initramfsVersion =
+        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml")))
+        .workspace.package.version;
 
       # The `mvm` flake, evaluated against this flake's pinned nixpkgs and the
       # filtered workspace. The recipes never touch microvm.nix, which this
