@@ -61,9 +61,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -85,9 +85,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -113,9 +113,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -185,9 +185,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -247,9 +247,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -299,9 +299,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -385,9 +385,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -490,9 +490,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -541,9 +541,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
@@ -583,9 +583,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Restore the Nix store cache
-        uses: nix-community/cache-nix-action@106bba72ed8e29c8357661199511ef07790175e9 # v7.0.1
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
           restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
