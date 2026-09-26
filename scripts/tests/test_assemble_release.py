@@ -16,6 +16,29 @@ sys.modules[SPEC.name] = ASSEMBLER
 SPEC.loader.exec_module(ASSEMBLER)
 
 
+class BuilderBootAbiTests(unittest.TestCase):
+    """The ABI is read from one checked-in file, so the image, the release
+    assembly and the local emitter cannot disagree about how PID 1 arrives."""
+
+    def test_the_shipped_value_is_a_supported_abi(self):
+        self.assertIn(ASSEMBLER.builder_boot_abi(ROOT), (0, 1))
+
+    def test_a_missing_file_is_refused_by_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ASSEMBLER.Refusal) as caught:
+                ASSEMBLER.builder_boot_abi(Path(tmp))
+            self.assertIn("boot-abi.nix", str(caught.exception))
+
+    def test_a_file_without_exactly_one_integer_is_refused(self):
+        for body in ("# only a comment\n", "0\n1\n", "abi = 1;\n"):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "images" / "builder-vm"
+                path.mkdir(parents=True)
+                (path / "boot-abi.nix").write_text(body)
+                with self.assertRaises(ASSEMBLER.Refusal):
+                    ASSEMBLER.builder_boot_abi(Path(tmp))
+
+
 class AssembleReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -84,6 +107,11 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertEqual(manifest["set_version"], "0.1.0")
         self.assertEqual(manifest["compatibility"]["guest_agent_protocol"], {"min": 2, "max": 3})
         self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 4)
+        self.assertEqual(
+            manifest["compatibility"]["builder_boot_abi"],
+            ASSEMBLER.builder_boot_abi(ROOT),
+            "the declared boot ABI must be the one images/builder-vm/boot-abi.nix holds",
+        )
         for member in ASSEMBLER.member_specs():
             self.assertTrue((self.assets / f"pack-{member.slug}.json").is_file())
             self.assertTrue((self.assets / f"sbom-{member.slug}.spdx.json").is_file())

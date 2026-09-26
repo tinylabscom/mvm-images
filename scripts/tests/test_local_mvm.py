@@ -94,9 +94,10 @@ def mvm_checkout(root: Path) -> Path:
     )
 
 
-def images_checkout(root: Path) -> Path:
+def images_checkout(root: Path, boot_abi: str = "0\n") -> Path:
     files = {marker: f"# {marker}\n" for marker in eml.IMAGES_MARKERS}
     files["kernel/flake.lock"] = '{"nodes": {}}\n'
+    files["images/builder-vm/boot-abi.nix"] = boot_abi
     return committed_repo(root, files)
 
 
@@ -183,6 +184,16 @@ class Fingerprint(unittest.TestCase):
 
 
 class Emit(Fixture):
+    def test_the_declared_boot_abi_comes_from_the_images_checkout(self):
+        self.images = images_checkout(self.tmp / "images-abi-1", boot_abi="1\n")
+        manifest = self.emit(("builder_vm", "ext4", self.artifact("rootfs.ext4")))
+        self.assertEqual(manifest["compatibility"]["builder_boot_abi"], 1)
+
+    def test_an_images_checkout_without_a_boot_abi_is_refused_by_path(self):
+        (self.images / "images" / "builder-vm" / "boot-abi.nix").unlink()
+        detail = self.refused(("builder_vm", "ext4", self.artifact("rootfs.ext4")))
+        self.assertIn("boot-abi.nix", detail)
+
     def test_records_both_checkouts_and_every_artifact(self):
         kernel = self.artifact("vmlinux", b"kernel bytes")
         overlay = self.artifact("overlay.ext4", b"overlay")
@@ -206,7 +217,11 @@ class Emit(Fixture):
         self.assertEqual(manifest["mvm_source_commit"], local["mvm"]["commit"])
         self.assertEqual(
             manifest["compatibility"],
-            {"guest_agent_protocol": {"min": 2, "max": 3}, "builder_cache_contract": 1},
+            {
+                "guest_agent_protocol": {"min": 2, "max": 3},
+                "builder_cache_contract": 1,
+                "builder_boot_abi": 0,
+            },
         )
         self.assertEqual(
             [lock["reference"] for lock in manifest["nix_inputs"]["flake_locks"]],
