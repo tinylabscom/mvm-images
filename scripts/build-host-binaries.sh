@@ -4,8 +4,8 @@
 # Usage: scripts/build-host-binaries.sh <aarch64|x86_64> [work-dir]
 #        scripts/build-host-binaries.sh --mvm-checkout <dir> <aarch64|x86_64>
 #
-# The builder VM rootfs installs three static musl binaries that are built
-# outside Nix: mvm-host-vm-init, mvm-egress-proxy and mvm-builderd. The builder
+# The builder VM rootfs installs two static musl binaries that are built
+# outside Nix: mvm-host-vm-init and mvm-builderd. The builder
 # image reads them from $MVM_HOST_BIN_DIR under `--impure`. This script builds
 # them exactly as mvm's release-boot-image.yml does — `cargo zigbuild --release
 # --locked` in a checkout of the source — and prints the directory to use as
@@ -123,15 +123,14 @@ fi
 (
   cd "$src"
   cargo zigbuild --release --locked --target "$target" \
-    -p mvm-build --bin mvm-host-vm-init --bin mvm-egress-proxy \
-    --bin mvm-builderd
+    -p mvm-build --bin mvm-host-vm-init --bin mvm-builderd
 )
 
 # Where cargo put them, as cargo resolves it for this source, rather than a
 # guess at `$src/target` that a configured target directory would make wrong.
 target_dir=$(cd "$src" && cargo metadata --format-version 1 --no-deps | jq -er .target_directory)
 bin_dir="$target_dir/$target/release"
-for b in mvm-host-vm-init mvm-egress-proxy mvm-builderd; do
+for b in mvm-host-vm-init mvm-builderd; do
   [ -x "$bin_dir/$b" ] || { echo "cargo zigbuild produced no $bin_dir/$b" >&2; exit 1; }
 done
 
