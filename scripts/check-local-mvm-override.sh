@@ -58,11 +58,11 @@ printf '// local edit\n' >> "$work/edited/crates/mvm-agentd/src/lib.rs"
 unchanged=$(cd "$work/unchanged" && pwd -P)
 edited=$(cd "$work/edited" && pwd -P)
 
-# The builder image reads its three host binaries from MVM_HOST_BIN_DIR at
+# The builder image reads its two host binaries from MVM_HOST_BIN_DIR at
 # evaluation time. Evaluation copies them and nothing runs them, so stand-ins
 # with the right names are enough.
 mkdir "$work/host-bins"
-for b in mvm-host-vm-init mvm-egress-proxy mvm-builderd; do
+for b in mvm-host-vm-init mvm-builderd; do
   printf 'evaluation stand-in\n' > "$work/host-bins/$b"
 done
 
