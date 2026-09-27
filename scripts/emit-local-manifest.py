@@ -372,12 +372,33 @@ def build_members(args, staging: Path) -> list[dict]:
     return list(members.values())
 
 
+def builder_boot_abi(images_root: Path) -> int:
+    """The builder boot ABI this repository builds its builder image to.
+
+    Read from `images/builder-vm/boot-abi.nix`, the same file the image and the
+    release assembly read, so a local set declares the ABI its own builder image
+    was built to rather than a number copied here.
+    """
+    path = images_root / "images" / "builder-vm" / "boot-abi.nix"
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise Refusal(f"cannot read the builder boot ABI at {path}: {exc}") from exc
+    values = re.findall(r"^\s*(\d+)\s*$", text, re.MULTILINE)
+    if len(values) != 1:
+        raise Refusal(
+            f"{path} must hold exactly one bare integer, found {len(values)}"
+        )
+    return int(values[0])
+
+
 def emit(args) -> Path:
     images_given = args.images_checkout or str(Path(__file__).resolve().parent.parent)
     images = checkout_root(images_given, "mvm-images", IMAGES_MARKERS)
     mvm = checkout_root(args.mvm_checkout, "mvm", MVM_MARKERS)
     if args.builder_cache_contract < 1:
         raise Refusal("--builder-cache-contract must be a positive integer")
+    boot_abi = builder_boot_abi(images)
     if not args.artifact:
         raise Refusal("no --artifact given; a set has at least one member")
     out = output_dir(args.out, [images, mvm])
@@ -407,6 +428,7 @@ def emit(args) -> Path:
             "compatibility": {
                 "guest_agent_protocol": protocol,
                 "builder_cache_contract": args.builder_cache_contract,
+                "builder_boot_abi": boot_abi,
             },
             "nix_inputs": {"flake_locks": locks, "source_revisions": []},
             "members": members,
