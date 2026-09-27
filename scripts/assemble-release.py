@@ -195,6 +195,26 @@ def parse_protocols(mvm_source: Path) -> tuple[int, int, int]:
     return low, high, cache
 
 
+def builder_boot_abi(images_root: Path) -> int:
+    """The builder boot ABI this repository builds its builder image to.
+
+    Read from `images/builder-vm/boot-abi.nix` rather than written out here, so
+    the image, the release assembly and the local emitter cannot disagree about
+    how a consumer must supply PID 1.
+    """
+    path = images_root / "images" / "builder-vm" / "boot-abi.nix"
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise Refusal(f"cannot read the builder boot ABI at {path}: {exc}") from exc
+    values = re.findall(r"^\s*(\d+)\s*$", text, re.MULTILINE)
+    if len(values) != 1:
+        raise Refusal(
+            f"{path} must hold exactly one bare integer, found {len(values)}"
+        )
+    return int(values[0])
+
+
 def pinned_mvm_commit(lock_path: Path) -> str:
     lock = json.loads(lock_path.read_text())
     try:
@@ -364,6 +384,7 @@ def assemble(args: argparse.Namespace) -> None:
     flake_hash = sha256_file(flake_lock)
     mvm_commit = pinned_mvm_commit(flake_lock)
     low, high, cache = parse_protocols(args.mvm_source.resolve())
+    boot_abi = builder_boot_abi(Path(__file__).resolve().parent.parent)
     release_url = f"https://github.com/{REPOSITORY}/releases/download/{args.tag}"
 
     rendered_members = []
@@ -416,6 +437,7 @@ def assemble(args: argparse.Namespace) -> None:
         "compatibility": {
             "guest_agent_protocol": {"min": low, "max": high},
             "builder_cache_contract": cache,
+            "builder_boot_abi": boot_abi,
         },
         "nix_inputs": {
             "flake_locks": [{"reference": ".", "lock_hash": flake_hash}],
