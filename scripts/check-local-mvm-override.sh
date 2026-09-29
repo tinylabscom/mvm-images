@@ -59,8 +59,11 @@ unchanged=$(cd "$work/unchanged" && pwd -P)
 edited=$(cd "$work/edited" && pwd -P)
 
 # At boot ABI 1 the builder image bakes no mvm host binaries — the boot
-# contract supplies them from mvmctl's payload — so every role here
-# evaluates pure; no environment and no --impure.
+# contract supplies them from mvmctl's payload — so every role drvPath above
+# evaluates pure; no environment and no --impure. The one exception is the
+# MVM_WORKSPACE_PATH guard check below: the flake refuses that variable
+# through builtins.getEnv, which only sees the environment under --impure,
+# so that single evaluation is impure on purpose.
 # Nix narrates every override on stderr; keep that for the evaluations that fail.
 drv_path() { # attr [override-dir]
   local args=() out
@@ -119,7 +122,19 @@ for attr in "${rust_roles[@]}" "${helper_only_roles[@]}"; do
   fi
 done
 
-if MVM_WORKSPACE_PATH="$unchanged" drv_path runtime-overlay.default "$unchanged" \
+# Impure on purpose: the guard reads the variable through builtins.getEnv,
+# which is invisible to a pure evaluation.
+drv_path_impure() { # attr [override-dir]
+  local args=() out
+  [ -z "${2:-}" ] || args=(--override-input mvm "path:$2")
+  if ! out=$("${MVM_NIX[@]}" eval --impure --raw \
+    ".#legacyPackages.$system.$1.drvPath" "${args[@]}" 2>"$work/refusal"); then
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+if MVM_WORKSPACE_PATH="$unchanged" drv_path_impure runtime-overlay.default "$unchanged" \
   >/dev/null 2>"$work/refusal"; then
   fail "MVM_WORKSPACE_PATH was accepted alongside the override"
 elif grep -q 'MVM_WORKSPACE_PATH is set' "$work/refusal"; then

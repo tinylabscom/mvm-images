@@ -57,8 +57,8 @@
       systems = [ "aarch64-linux" "x86_64-linux" ];
 
       # `mvm`'s nix/flake.nix swaps its source for `$MVM_WORKSPACE_PATH` when
-      # that variable is set, and the builder and default images evaluate
-      # impurely. Left unguarded, an ambient variable would build these images
+      # that variable is set; role evaluations that need the environment pass
+      # --impure and see it. Left unguarded, an ambient variable would build these images
       # from whatever checkout it names while every label still said the
       # pinned commit. Refuse instead: a local mvm source is selected with
       # `--override-input mvm`, which changes the input itself, so every
