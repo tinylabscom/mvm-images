@@ -195,9 +195,14 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
                     f"default-workload-rootfs-dev-{arch}",
                     {"workload_rootfs": "default_tenant"},
                     target,
-                    # The dev build is unsealed: no dm-verity sidecars, the
-                    # same two files the dev slot installs from a pair build.
-                    (Artifact(f"default-microvm-dev-rootfs-{arch}.ext4", "ext4"),),
+                    # The dev build is unsealed: no dm-verity sidecars. The
+                    # member carries the meta sidecar too, so a consumer that
+                    # fetches the dev slot gets the complete install a pair
+                    # build produces.
+                    (
+                        Artifact(f"default-microvm-dev-rootfs-{arch}.ext4", "ext4"),
+                        Artifact(f"default-microvm-dev-meta-{arch}.json", "json"),
+                    ),
                     ("virtio_blk",),
                     build_mode="dev",
                 ),
