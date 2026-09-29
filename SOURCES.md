@@ -182,9 +182,3 @@ Every change is one of these, and nothing else.
 These are copied as they are so the drift check tracks them; fixing them is
 follow-up work, not part of the move.
 
-- The builder's host binaries are compiled with the Rust toolchain mvm's
-  `rust-toolchain.toml` selects, because that is what the `cargo zigbuild` in
-  `release-boot-image.yml` runs. mvm's `build.rs` embeds its copies with the
-  `rust` pin in `[workspace.metadata.mvm.toolchain]` instead, so the two mvm
-  producers do not use the same compiler. `scripts/build-host-binaries.sh`
-  follows the release workflow.

@@ -6,8 +6,8 @@
   # The guest and builder binaries inside these images are compiled from
   # `mvm` source against `mvm`'s Cargo.lock, by recipes that stay in `mvm`.
   # This flake takes that source as the `mvm` input, pinned to one exact
-  # commit here and in flake.lock, and nowhere else. Every image, and
-  # `scripts/build-host-binaries.sh`, reads the commit from this input.
+  # commit here and in flake.lock, and nowhere else. Every image reads
+  # the commit from this input.
   # Advancing it is an edit to the URL below plus `nix flake lock`.
   #
   # `mvm` is taken as plain source (`flake = false`), not as a flake, on
@@ -46,7 +46,7 @@
     };
     nixpkgs-initramfs.url = "github:NixOS/nixpkgs/nixos-25.11";
     mvm = {
-      url = "github:tinylabscom/mvm/81a38bbcdbad88aca138dfa00756f9c5c04edfb4";
+      url = "github:tinylabscom/mvm/0f33c057d85384460c77c3bf0c0187b3f021677d";
       flake = false;
     };
   };

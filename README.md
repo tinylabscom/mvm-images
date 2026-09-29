@@ -267,9 +267,11 @@ just build role=all  # equivalent named-argument spelling
 just build-all       # explicit alias; optionally accepts an architecture
 ```
 
-For a focused iteration, address one role or kernel. `just builder-vm` also
-cross-compiles the three static host binaries it needs from the pinned `mvm`
-commit, so there is no separate environment-variable dance.
+For a focused iteration, address one role or kernel. At boot ABI 1 the
+builder image bakes no mvm host binaries — the boot contract supplies
+`mvm-host-vm-init` and `mvm-builderd` from mvmctl's payload at boot — so
+`just builder-vm` is a plain, pure `nix build` with no toolchain or
+environment-variable dance.
 
 ```sh
 just list
@@ -284,13 +286,8 @@ just builder-vm
 
 The optional final arguments select a system or pass Nix flags—for example,
 `just build runtime-overlay default aarch64-linux --no-link`. Tenant production
-outputs require the explicit `--impure` shown above; `just builder-vm` and the
-complete-build aliases set their own required flags.
-
-`just builder-vm` and the complete-build aliases also install the exact Zig
-version pinned by the selected `mvm` source under
-`~/.local/mvm-images/bin` and prefer it for that build. They do not replace a
-Homebrew or system Zig, and no manual `PATH` adjustment is required.
+outputs require the explicit `--impure` shown above; the builder image
+evaluates pure.
 
 `MVM_WORKSPACE_PATH` must be unset; the flake refuses to evaluate with it,
 because `mvm`'s `nix/flake.nix` would otherwise build from whatever checkout it

@@ -122,14 +122,9 @@ jobs:
           # Bound what we save: the overlay's shim closure pulls far more than
           # the 10 GiB Actions cache holds, so keep the most valuable paths.
           gc-max-store-size: 2G
-      - name: Install the pinned zig and cargo-zigbuild
-        run: ./scripts/install-host-toolchain.sh
-      # The builder rootfs installs static musl host binaries built outside
-      # Nix; the image reads them from MVM_HOST_BIN_DIR under --impure.
-      - name: Cross-compile the host binaries (MVM_HOST_BIN_DIR contract)
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: ./scripts/build-host-binaries.sh "$ARCH" "$RUNNER_TEMP/mvm"
+      # ABI 1: the image bakes no mvm host binaries — the boot contract
+      # supplies them from mvmctl's payload at boot — so the eval is pure
+      # and no zig/cargo toolchain or MVM_HOST_BIN_DIR is needed here.
       - name: Build builder VM image
         env:
           ARCH: ${{ matrix.arch }}
@@ -137,7 +132,7 @@ jobs:
           set -euo pipefail
           SYSTEM="${ARCH}-linux"
           STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.builder-vm.default" \
-            --impure --no-link --print-out-paths | head -1)
+            --no-link --print-out-paths | head -1)
           echo "STORE_PATH=${STORE_PATH}" >> "$GITHUB_ENV"
           mkdir -p staging
           cp "$STORE_PATH/vmlinux"         "staging/builder-vm-vmlinux-${ARCH}"

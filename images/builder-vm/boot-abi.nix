@@ -11,7 +11,8 @@
 # supply PID 1 from that declaration, so a second copy of this number is a
 # builder that boots the wrong way.
 #
-# It flips to 1 in the same change that stops the flake reading
-# MVM_HOST_BIN_DIR. Publishing an ABI-1 set is gated on an mvmctl that supplies
-# the payload being the pinned consumer.
-0
+# The flake stopped reading MVM_HOST_BIN_DIR in the same change this flipped
+# to 1: the builder image bakes no mvm host binary, and the pinned mvm
+# consumer supplies them at boot from its payload. Publishing an ABI-1 set is
+# gated on an mvmctl that supplies the payload being the pinned consumer.
+1

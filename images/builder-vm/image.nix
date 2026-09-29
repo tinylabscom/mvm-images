@@ -16,7 +16,7 @@
   #   (`nix/lib/workspace-filter.nix`), so the filtered store path is the
   #   one an in-tree `mvm` build produces for the same commit.
   # - Call the `mvm` flake's `outputs` directly (`nix/flake.nix`) for
-  #   mkGuest, the guest recipes and the host-binaries manifest — no
+  #   mkGuest and the guest recipes — no
   #   flake-input chain, so no path-input lock validation issue.
   #
   # ── Builder VM package set ────────────────────────────────────────
@@ -62,30 +62,13 @@
           inherit nixpkgs mvm-src;
         };
 
-      # Host binaries are embedded in mvmctl and extracted by
-      # `host_binaries::ensure_extracted()` before invoking
-      # `nix build path:... --impure`. The dir is passed in via env var;
-      # no rustPlatform.buildRustPackage calls are permitted in this flake.
-      hostBinDir =
-        let envPath = builtins.getEnv "MVM_HOST_BIN_DIR";
-        in if envPath != ""
-           then /. + envPath
-           else throw ''
-             MVM_HOST_BIN_DIR is not set. Plan 115 / ADR-004 contract:
-             mvmctl populates this dir via host_binaries::ensure_extracted()
-             before invoking `nix build path:... --impure`. To run nix
-             build by hand: extract the embedded binaries from your
-             mvmctl with `mvmctl inspect host-bins --extract-to <DIR>`
-             and pass MVM_HOST_BIN_DIR=<DIR> --impure.
-           '';
-
-      hostBinExtraFilesFor = system:
-        nixpkgs.lib.mapAttrs' (name: spec:
-          nixpkgs.lib.nameValuePair spec.install_path {
-            source = hostBinDir + "/${name}";
-            mode = spec.mode;
-          }
-        ) mvm.lib.${system}.hostBinaries;
+      # The builder boot ABI this image is built to (./boot-abi.nix, a bare
+      # integer, so the manifest emitters read the same value as text). ABI 1:
+      # mvm's host binaries (mvm-host-vm-init, mvm-builderd) arrive at boot in
+      # mvmctl's own initramfs payload, so the image bakes none of them and
+      # the derivation evaluates pure — no rustPlatform.buildRustPackage
+      # calls are permitted in this flake.
+      bootAbi = import ./boot-abi.nix;
 
       # Filter list lives at nix/lib/workspace-filter.nix so the three
       # flakes that ingest the host workspace (this one, builder/,
@@ -97,9 +80,9 @@
         { inherit workspaceRoot; };
 
       # The `mvm` flake, evaluated against this flake's pinned inputs and the
-      # filtered workspace. mkGuest, the guest recipes and the host-binaries
-      # manifest all come from its outputs: the interface an image repository
-      # pins is the one this flake already builds through.
+      # filtered workspace. mkGuest and the guest recipes come from its
+      # outputs: the interface an image repository pins is the one this
+      # flake already builds through.
       mvm = (import (workspaceRoot + "/nix/flake.nix")).outputs {
         self = { };
         inherit nixpkgs microvm;
@@ -222,11 +205,14 @@
       # - `rootwait` — wait for virtio-blk root enumeration before mounting.
       # - `panic=-1 loglevel=8` — reboot on panic and keep early boot verbose
       #   enough that the host-side console capture has useful crash context.
-      # - `init=/init mvm.chain_init=/sbin/mvm-host-vm-init` — enter the
-      #   shell-known-good busybox /init first, then chain into
-      #   mvm-host-vm-init after the generic pseudofs/tmpfs bootstrap. The
-      #   target path must still match nix/lib/mvm-host-binaries.nix.
-      builderCmdline = "console=hvc0 root=/dev/vda ro rootfstype=ext4 rootwait panic=-1 loglevel=8 init=/init mvm.chain_init=/sbin/mvm-host-vm-init";
+      # - `init=/init` alone — at boot ABI 1 the image bakes no mvm binary,
+      #   so there is nothing to chain into: booting the image by itself
+      #   enters the shell-known-good busybox /init. Every real builder boot
+      #   composes its own line from the boot contract (a payload boot names
+      #   mvm.boot=<digest>, which is minted per boot and cannot be recorded
+      #   here); this line is only the cache's shape and what the image would
+      #   boot with alone.
+      builderCmdline = "console=hvc0 root=/dev/vda ro rootfstype=ext4 rootwait panic=-1 loglevel=8 init=/init";
 
       # Extra packages for the interactive (dev) builder VM image.
       # Added on top of `builderPackages` when `interactive = true`.
@@ -252,9 +238,9 @@
       # the full builder-VM image or the Stage 0 seed.
       #
       # Host binaries (mvm-host-vm-init, mvm-builderd) are no
-      # longer built from source here.
-      # They come in from `hostBinExtraFiles` (keyed by install_path)
-      # and are read from MVM_HOST_BIN_DIR at eval time.
+      # longer baked into the rootfs at all: at ABI 1 the boot
+      # contract supplies them from mvmctl's initramfs payload at
+      # boot, and the image writes only the ABI marker below.
       mkBuilderVmRootfs =
         { system, interactive ? false }:
         let
@@ -279,17 +265,21 @@
           # a passwd/group entry so Nix can resolve its home directory.
           builderUid = 902;
           packages = (builderPackages system pkgs) ++ extraPkgs;
-          # Host binaries (mvm-host-vm-init, mvm-builderd) come
-          # from MVM_HOST_BIN_DIR via hostBinExtraFiles — embedded
-          # in mvmctl, no rustPlatform.buildRustPackage calls
-          # in this flake.
+          # /etc/mvm/builder-boot-abi tells the boot contract this
+          # image meets ABI 1: PID 1 (mvm-host-vm-init) and mvm-builderd
+          # arrive in mvmctl's initramfs payload, baked nowhere in this
+          # rootfs.
           # /usr/bin/firecracker is pinned for the guest's
           # FirecrackerVmm spawn. firecracker is
           # also in `packages` above (for the full closure +
           # the /sbin + /usr/local/bin symlinks mkGuest adds);
           # this entry guarantees the canonical /usr/bin path
           # regardless of mkGuest's symlink targets.
-          extraFiles = hostBinExtraFilesFor system // {
+          extraFiles = {
+            "/etc/mvm/builder-boot-abi" = {
+              content = "${toString bootAbi}\n";
+              mode = "0444";
+            };
             "/usr/bin/firecracker" =
               "${pkgs.firecracker}/bin/firecracker";
           };
@@ -300,9 +290,10 @@
       #   dev     — interactive builder VM (`builderPackages` + `devPackages`).
       #             No `mvmctl` verb boots it.
       #
-      # Both take host binaries from MVM_HOST_BIN_DIR (set by mvmctl before
-      # invoking `nix build ... --impure`). No rustPlatform.buildRustPackage
-      # calls remain in this flake.
+      # Both evaluate pure: the boot contract supplies the host binaries
+      # from mvmctl's payload at boot, so the image bakes none and reads no
+      # environment. No rustPlatform.buildRustPackage calls remain in this
+      # flake.
       mkBuilderVmImage =
         { system, interactive ? false }:
         let
