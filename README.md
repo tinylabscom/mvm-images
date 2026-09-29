@@ -4,6 +4,20 @@ The system-image train for [mvm](https://github.com/tinylabscom/mvm): every
 base image an mvm host boots is built, verified, signed and published here,
 then consumed by `mvm` through one digest-pinned lock file.
 
+## How this repo relates to `mvm`
+
+For images, the dependency runs one way: **`mvm` depends on this repository**.
+Every byte a guest boots is built, signed, and published here as an immutable
+`image-set/v*` release, and `mvm` consumes those sets through its checked-in
+`images.lock` — it never builds an image. The one reverse edge is **source**,
+not images: the guest binaries' source (agent, egress client, the shared
+`mvm-core`/`mvm-contract` protocol crates) lives in `mvm`, because they
+compile against that workspace's `Cargo.lock` and are exercised by its tests.
+This repository takes that source as the `mvm` flake input — pinned to one
+exact commit in `flake.lock`, advanced with `nix flake lock --update-input
+mvm` — and builds the binaries as one input among the image's. Image
+construction never happens in the `mvm` tree.
+
 ## Start here
 
 `just` is the contributor interface. Run `just` or `just list` to see the
