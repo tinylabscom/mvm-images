@@ -10,11 +10,14 @@
 #
 # For each line of sources/files.tsv the original is read from mvm, the
 # rewrite in sources/rewrites/<path here>.patch (if any) is applied to it, and
-# the result must equal the file here byte for byte. It also checks that the
-# nixpkgs and microvm.nix pins in flake.lock are the ones mvm's image flakes
-# lock, and reports files that appeared in mvm's nix/images/ without being
-# accounted for here. `sources/ignored.tsv` explicitly accounts for upstream
-# workload-specific files that are intentionally not base-image roles.
+# the result must equal the file here byte for byte. It reports files that
+# appeared in mvm's nix/images/ without being accounted for here (none can,
+# since mvm's W8 deletion, but the scan still guards a regrowth).
+# `sources/ignored.tsv` explicitly accounts for upstream workload-specific
+# files that are intentionally not base-image roles. The nixpkgs and microvm.nix
+# pins are owned outright by this repository's root flake.lock: mvm's per-image
+# locks no longer exist at pins past the W8 deletion, so there is nothing to
+# compare them against.
 #
 # To record a new intentional rewrite: edit the file here, then regenerate its
 # patch with --write-patches and describe the change in SOURCES.md.
@@ -124,29 +127,6 @@ while IFS= read -r f; do
   fi
   [ "$found" = 1 ] || report "$f exists in $label but is not in sources/files.tsv"
 done < <(upstream_ls nix/images)
-
-# The root lock must pin what mvm's image flakes lock.
-lock_pin() { # lock-json node
-  jq -c --arg n "$2" '.nodes[.nodes.root.inputs[$n]].locked | {rev, narHash}' <<<"$1"
-}
-ours_lock=$(cat flake.lock)
-check_pin() { # our-input their-lock their-input
-  local theirs_json
-  if ! theirs_json=$(upstream_cat "$2"); then
-    report "$2 no longer exists in $label"
-    return
-  fi
-  if [ "$(lock_pin "$ours_lock" "$1")" != "$(lock_pin "$theirs_json" "$3")" ]; then
-    report "flake.lock input '$1' is $(lock_pin "$ours_lock" "$1"), $2 in $label locks $(lock_pin "$theirs_json" "$3")"
-  fi
-}
-for role in builder-vm default-tenant runtime-overlay; do
-  check_pin nixpkgs "nix/images/$role/flake.lock" nixpkgs
-done
-for role in builder-vm default-tenant; do
-  check_pin microvm "nix/images/$role/flake.lock" microvm
-done
-check_pin nixpkgs-initramfs nix/images/initramfs/flake.lock nixpkgs
 
 if [ "$drift" != 0 ]; then
   echo "check-source-drift: the copies here have drifted from $label" >&2
