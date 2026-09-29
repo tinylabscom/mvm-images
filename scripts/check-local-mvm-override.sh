@@ -58,19 +58,14 @@ printf '// local edit\n' >> "$work/edited/crates/mvm-agentd/src/lib.rs"
 unchanged=$(cd "$work/unchanged" && pwd -P)
 edited=$(cd "$work/edited" && pwd -P)
 
-# The builder image reads its two host binaries from MVM_HOST_BIN_DIR at
-# evaluation time. Evaluation copies them and nothing runs them, so stand-ins
-# with the right names are enough.
-mkdir "$work/host-bins"
-for b in mvm-host-vm-init mvm-builderd; do
-  printf 'evaluation stand-in\n' > "$work/host-bins/$b"
-done
-
+# At boot ABI 1 the builder image bakes no mvm host binaries — the boot
+# contract supplies them from mvmctl's payload — so every role here
+# evaluates pure; no environment and no --impure.
 # Nix narrates every override on stderr; keep that for the evaluations that fail.
 drv_path() { # attr [override-dir]
   local args=() out
   [ -z "${2:-}" ] || args=(--override-input mvm "path:$2")
-  if ! out=$(MVM_HOST_BIN_DIR="$work/host-bins" "${MVM_NIX[@]}" eval --impure --raw \
+  if ! out=$("${MVM_NIX[@]}" eval --raw \
     ".#legacyPackages.$system.$1.drvPath" "${args[@]}" 2>"$work/eval.err"); then
     cat "$work/eval.err" >&2
     return 1

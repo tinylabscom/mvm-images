@@ -11,8 +11,6 @@ on:
     paths:
       - .github/workflows/reproduce.yml
       - scripts/check-reproducible.sh
-      - scripts/build-host-binaries.sh
-      - scripts/install-host-toolchain.sh
       - flake.nix
       - flake.lock
       - kernel/**
@@ -47,14 +45,8 @@ jobs:
           persist-credentials: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - name: Install the pinned zig and cargo-zigbuild
-        if: ${{ matrix.role == 'builder-vm' }}
-        run: ./scripts/install-host-toolchain.sh
-      - name: Build pinned builder inputs
-        if: ${{ matrix.role == 'builder-vm' }}
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: ./scripts/build-host-binaries.sh "$ARCH" "$RUNNER_TEMP/mvm"
+      # ABI 1: the builder image bakes no mvm host binaries, so no zig
+      # toolchain or MVM_HOST_BIN_DIR stand-in is built for it.
       - name: Rebuild the canonical image byte-for-byte
         env:
           ARCH: ${{ matrix.arch }}

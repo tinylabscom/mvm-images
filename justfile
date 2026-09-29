@@ -27,7 +27,7 @@ list:
     @echo '  builder-vm       default, dev, stage0-rootfs,'
     @echo '                   builder-kernel, workload-kernel,'
     @echo '                   kernel-configfile, workload-kernel-configfile,'
-    @echo '                   sdk-sidecar-image{,-musl}   (needs MVM_HOST_BIN_DIR + --impure)'
+    @echo '                   sdk-sidecar-image{,-musl}   (pure; host binaries arrive in the boot payload)'
     @echo '  default-tenant   default, dev                 (default needs --impure)'
     @echo '  rootless-tenant  default, prod, dev, smoke    (generic; no NIC)'
     @echo '  runtime-overlay  default,'
@@ -58,40 +58,18 @@ build role attr="default" system=system *nix_args:
 kernel attr="workload-vmlinux":
     nix build "./kernel#{{attr}}"
 
-# Cross-compile the builder VM's three static host binaries and print
-# MVM_HOST_BIN_DIR=<dir>. Without a checkout argument the source is the
-# commit flake.lock pins; with one, that checkout's tree, edits included.
-host-binaries mvm_checkout="" target=arch:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -n "{{mvm_checkout}}" ]; then
-        exec scripts/build-host-binaries.sh --mvm-checkout "$(cd '{{mvm_checkout}}' && pwd -P)" "{{target}}"
-    fi
-    exec scripts/build-host-binaries.sh "{{target}}"
-
-# Build the builder VM: host binaries from the same source as the guest,
-# then the image with MVM_HOST_BIN_DIR. Defaults to the pinned commit;
-# pass an mvm checkout to build from it instead.
+# Build the builder VM. At boot ABI 1 the image bakes no mvm host binaries —
+# the boot contract supplies them from mvmctl's payload at boot — so the eval
+# is pure and no zig toolchain or MVM_HOST_BIN_DIR is involved. Defaults to
+# the pinned mvm commit; pass an mvm checkout to evaluate against it instead.
 builder-vm mvm_checkout="" target=arch:
     #!/usr/bin/env bash
     set -euo pipefail
-    toolchain_prefix="$HOME/.local/mvm-images"
-    install_args=()
     if [ -n "{{mvm_checkout}}" ]; then
         mvm="$(cd '{{mvm_checkout}}' && pwd -P)"
-        install_args=(--mvm-checkout "$mvm")
-    fi
-    scripts/install-host-toolchain.sh "${install_args[@]}" "$toolchain_prefix"
-    # The installer runs as a child process, so its local path changes cannot
-    # affect this recipe. Prefer the exact Zig it just installed over any
-    # system/Homebrew Zig that appears earlier on the caller's PATH.
-    export PATH="$toolchain_prefix/bin:$PATH"
-    if [ -n "{{mvm_checkout}}" ]; then
-        bins="$(scripts/build-host-binaries.sh --mvm-checkout "$mvm" '{{target}}' | tee /dev/stderr | sed -n 's/^MVM_HOST_BIN_DIR=//p' | tail -1)"
-        MVM_HOST_BIN_DIR="$bins" nix build ".#legacyPackages.{{system}}.builder-vm.default" --impure --override-input mvm "path:$mvm"
+        nix build ".#legacyPackages.{{system}}.builder-vm.default" --override-input mvm "path:$mvm"
     else
-        bins="$(scripts/build-host-binaries.sh '{{target}}' | tee /dev/stderr | sed -n 's/^MVM_HOST_BIN_DIR=//p' | tail -1)"
-        MVM_HOST_BIN_DIR="$bins" nix build ".#legacyPackages.{{system}}.builder-vm.default" --impure
+        nix build ".#legacyPackages.{{system}}.builder-vm.default"
     fi
 
 # Build every release-bearing output for this machine's guest architecture.
@@ -230,7 +208,7 @@ e2e-qemu-wasm pack chrome:
     scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'
 
 # Rebuild one canonical role byte-for-byte — the reproduce.yml lane by hand.
-# builder-vm additionally requires MVM_HOST_BIN_DIR, just like its normal build.
+# builder-vm evaluates pure; the tenant roles read MVM_BOOT_IMAGE_TAG.
 reproduce target role out_dir:
     scripts/check-reproducible.sh '{{target}}' '{{role}}' '{{out_dir}}'
 

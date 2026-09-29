@@ -2,9 +2,9 @@
 
 Run with: python3 -m unittest discover -s scripts/tests -v
 
-Covers `emit-local-manifest.py` and the `--mvm-checkout` argument handling of
-`build-host-binaries.sh`. Every checkout here is a throwaway git repository
-under a temporary directory; nothing touches this repository's own tree.
+Covers `emit-local-manifest.py` against throwaway `mvm` and `mvm-images`
+checkouts. Every checkout here is a throwaway git repository under a
+temporary directory; nothing touches this repository's own tree.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def mvm_checkout(root: Path) -> Path:
     )
 
 
-def images_checkout(root: Path, boot_abi: str = "0\n") -> Path:
+def images_checkout(root: Path, boot_abi: str = "1\n") -> Path:
     files = {marker: f"# {marker}\n" for marker in eml.IMAGES_MARKERS}
     files["kernel/flake.lock"] = '{"nodes": {}}\n'
     files["images/builder-vm/boot-abi.nix"] = boot_abi
@@ -220,7 +220,7 @@ class Emit(Fixture):
             {
                 "guest_agent_protocol": {"min": 2, "max": 3},
                 "builder_cache_contract": 1,
-                "builder_boot_abi": 0,
+                "builder_boot_abi": 1,
             },
         )
         self.assertEqual(
@@ -475,51 +475,6 @@ class Refusals(Fixture):
         with mock.patch.object(eml, "repo_identity", drifting):
             self.assertIn("changed while the set was being recorded", self.refused(self.kernel()))
         self.assertFalse((self.tmp / "set").exists())
-
-
-class BuildHostBinariesCheckout(Fixture):
-    """`--mvm-checkout` is validated before any toolchain is looked at."""
-
-    def run_script(self, *argv: str):
-        return subprocess.run(
-            ["bash", str(SCRIPTS / "build-host-binaries.sh"), *argv],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    def test_refuses_a_path_that_is_not_an_mvm_checkout_root(self):
-        for given, reason in (
-            (self.tmp / "absent", "not a directory"),
-            (self.mvm / "nix", "not the root of its git checkout"),
-            (self.images, "not an mvm checkout"),
-        ):
-            result = self.run_script("--mvm-checkout", str(given), "aarch64")
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn(reason, result.stderr)
-
-    def test_refuses_a_work_dir_alongside_a_checkout(self):
-        result = self.run_script("--mvm-checkout", str(self.mvm), "aarch64", str(self.tmp / "w"))
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("takes no work-dir", result.stderr)
-
-    def test_builds_from_the_canonical_root_and_says_so(self):
-        # The fixture declares no toolchain, so the script stops right after
-        # naming the source it would build.
-        link = self.tmp / "mvm-link"
-        os.symlink(self.mvm, link)
-        (self.mvm / "Cargo.lock").write_text("version = 4\n# edited\n")
-        result = self.run_script("--mvm-checkout", str(link), "x86_64")
-        self.assertEqual(result.returncode, 1)
-        head = subprocess.run(
-            ["git", "-C", str(self.mvm), "rev-parse", "HEAD"], capture_output=True, text=True
-        ).stdout.strip()
-        self.assertIn(
-            f"building host binaries from the local mvm checkout {self.mvm} at {head} "
-            "(with uncommitted changes)",
-            result.stderr,
-        )
-        self.assertIn(f"of the local mvm checkout {self.mvm}", result.stderr)
 
 
 if __name__ == "__main__":
