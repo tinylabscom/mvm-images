@@ -136,6 +136,7 @@ jobs:
           echo "STORE_PATH=${STORE_PATH}" >> "$GITHUB_ENV"
           mkdir -p staging
           cp "$STORE_PATH/vmlinux"         "staging/builder-vm-vmlinux-${ARCH}"
+          cp "$STORE_PATH/kernel.config"   "staging/builder-vm-${ARCH}.kernel.config"
           cp "$STORE_PATH/rootfs.ext4"     "staging/builder-vm-rootfs-${ARCH}.ext4"
           cp -L "$STORE_PATH/cmdline.txt"   "staging/builder-vm-${ARCH}.cmdline.txt"
           cp -L "$STORE_PATH/manifest.json" "staging/builder-vm-${ARCH}.manifest.json"
@@ -148,6 +149,7 @@ jobs:
           cd staging
           sha256sum \
             "builder-vm-vmlinux-${ARCH}" "builder-vm-rootfs-${ARCH}.ext4" \
+            "builder-vm-${ARCH}.kernel.config" \
             "builder-vm-${ARCH}.cmdline.txt" "builder-vm-${ARCH}.manifest.json" \
             "builder-vm-${ARCH}.sbom.txt" \
             > "builder-vm-${ARCH}-checksums-sha256.txt"
@@ -158,6 +160,7 @@ jobs:
           if-no-files-found: error
           path: |
             staging/builder-vm-vmlinux-${{ matrix.arch }}
+            staging/builder-vm-${{ matrix.arch }}.kernel.config
             staging/builder-vm-rootfs-${{ matrix.arch }}.ext4
             staging/builder-vm-${{ matrix.arch }}.cmdline.txt
             staging/builder-vm-${{ matrix.arch }}.manifest.json

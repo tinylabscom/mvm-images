@@ -45,6 +45,20 @@ class ResolvedKernelContractTests(unittest.TestCase):
         with self.assertRaises(contract.ContractError):
             contract.check_resolved_kernel_configs([path])
 
+    def test_requires_explicit_network_device_disable(self):
+        path = self.write_config(
+            "CONFIG_VSOCKETS=y\nCONFIG_VIRTIO_VSOCKETS=y\n"
+        )
+        with self.assertRaisesRegex(contract.ContractError, "not explicitly disabled"):
+            contract.check_resolved_kernel_configs([path])
+
+    def test_builder_image_checks_and_packages_resolved_config(self):
+        image = (ROOT / "images/builder-vm/image.nix").read_text()
+        workflow = (ROOT / ".github/workflows/build.yml").read_text()
+        self.assertIn("--kernel-config $out/kernel.config", image)
+        self.assertIn('"no_network_devices_ready": true', image)
+        self.assertIn('"staging/builder-vm-${ARCH}.kernel.config"', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

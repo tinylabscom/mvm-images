@@ -18,6 +18,7 @@ REPOSITORY = "tinylabscom/mvm-images"
 WORKFLOW = ".github/workflows/release.yml"
 ZERO_SHA256 = "0" * 64
 ARCHES = ("x86_64", "aarch64")
+IMAGES_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Refusal(RuntimeError):
@@ -131,6 +132,7 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
                     target,
                     (
                         Artifact(f"builder-vm-vmlinux-{arch}", kernel),
+                        Artifact(f"builder-vm-{arch}.kernel.config", "text"),
                         Artifact(f"builder-vm-rootfs-{arch}.ext4", "ext4"),
                     ),
                     ("virtio_vsock", "virtio_blk"),
@@ -253,9 +255,8 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
     return tuple(members)
 
 
-def parse_protocols(mvm_source: Path) -> tuple[int, int, int]:
+def parse_protocols(mvm_source: Path) -> tuple[int, int]:
     agent = (mvm_source / "crates/mvm-agentd/src/vsock/mod.rs").read_text()
-    builder = (mvm_source / "crates/mvm-build/src/builder_vm.rs").read_text()
 
     def one(source: str, pattern: str, what: str) -> int:
         matches = re.findall(pattern, source, re.MULTILINE)
@@ -273,14 +274,17 @@ def parse_protocols(mvm_source: Path) -> tuple[int, int, int]:
         r"^pub const PROTOCOL_VERSION: u32 = (\d+);$",
         "current guest-agent protocol",
     )
-    cache = one(
-        builder,
-        r"^pub const BUILDER_VM_CACHE_CONTRACT_VERSION: u32 = (\d+);$",
-        "builder cache contract",
-    )
     if low < 1 or low > high:
         raise Refusal(f"invalid guest-agent protocol range {low}..={high}")
-    return low, high, cache
+    return low, high
+
+
+def builder_cache_contract(images_root: Path) -> int:
+    path = images_root / "images" / "builder-vm" / "cache-contract.nix"
+    body = path.read_text().strip()
+    if not body.isdecimal() or int(body) < 1:
+        raise Refusal(f"invalid builder cache contract in {path}")
+    return int(body)
 
 
 def builder_boot_abi(images_root: Path) -> int:
@@ -471,7 +475,8 @@ def assemble(args: argparse.Namespace) -> None:
     require_file(flake_lock)
     flake_hash = sha256_file(flake_lock)
     mvm_commit = pinned_mvm_commit(flake_lock)
-    low, high, cache = parse_protocols(args.mvm_source.resolve())
+    low, high = parse_protocols(args.mvm_source.resolve())
+    cache = builder_cache_contract(IMAGES_ROOT)
     boot_abi = builder_boot_abi(Path(__file__).resolve().parent.parent)
     release_url = f"https://github.com/{REPOSITORY}/releases/download/{args.tag}"
 
