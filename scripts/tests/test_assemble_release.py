@@ -45,7 +45,7 @@ class AssembleReleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.assets = self.root / "assets"
         self.assets.mkdir()
-        for member in ASSEMBLER.member_specs():
+        for member in ASSEMBLER.member_specs("f" * 64):
             for artifact in member.artifacts:
                 if artifact.name.startswith("stage0-vmlinux-"):
                     continue
@@ -66,6 +66,17 @@ class AssembleReleaseTests(unittest.TestCase):
         (builder / "builder_vm.rs").write_text(
             "pub const BUILDER_VM_CACHE_CONTRACT_VERSION: u32 = 4;\n"
         )
+        # The SDK sidecar fingerprint walks the same source list the consumer
+        # hashes; the fake source needs every declared input.
+        (self.mvm / "Cargo.toml").write_text("[workspace]\n")
+        (self.mvm / "Cargo.lock").write_text("lock\n")
+        for crate in ("mvm-contract", "mvm-core", "mvm-agentd", "mvm-host-services"):
+            src = self.mvm / "crates" / crate / "src"
+            src.mkdir(parents=True, exist_ok=True)
+            (self.mvm / "crates" / crate / "Cargo.toml").write_text(
+                f'[package]\nname = "{crate}"\n'
+            )
+            (src / "lib.rs").write_text("pub const X: u8 = 0;\n")
         self.lock = self.root / "flake.lock"
         self.lock.write_text(
             json.dumps(
@@ -103,7 +114,7 @@ class AssembleReleaseTests(unittest.TestCase):
         result = self.run_assembler()
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((self.assets / "image-set.json").read_text())
-        self.assertEqual(len(manifest["members"]), 21)
+        self.assertEqual(len(manifest["members"]), 25)
         self.assertEqual(manifest["set_version"], "0.1.0")
         self.assertEqual(manifest["compatibility"]["guest_agent_protocol"], {"min": 2, "max": 3})
         self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 4)
@@ -112,9 +123,24 @@ class AssembleReleaseTests(unittest.TestCase):
             ASSEMBLER.builder_boot_abi(ROOT),
             "the declared boot ABI must be the one images/builder-vm/boot-abi.nix holds",
         )
-        for member in ASSEMBLER.member_specs():
+        for member in ASSEMBLER.member_specs("f" * 64):
             self.assertTrue((self.assets / f"pack-{member.slug}.json").is_file())
             self.assertTrue((self.assets / f"sbom-{member.slug}.spdx.json").is_file())
+        dev_rootfs = [
+            m
+            for m in manifest["members"]
+            if m["role"] == {"workload_rootfs": "default_tenant"}
+            and m.get("build_mode") == "dev"
+        ]
+        self.assertEqual(sorted(m["target"]["arch"] for m in dev_rootfs), sorted(ASSEMBLER.ARCHES))
+        sidecars = [m for m in manifest["members"] if "sdk_sidecar" in m["role"]]
+        self.assertEqual(len(sidecars), 4)
+        for sidecar in sidecars:
+            self.assertEqual(
+                sidecar.get("source_fingerprint"),
+                ASSEMBLER.sdk_cdylib_fingerprint(self.mvm),
+                "the sidecar must publish the cdylib source fingerprint of the pinned tree",
+            )
         initramfs = [m for m in manifest["members"] if m["role"] == "initramfs"]
         self.assertEqual(
             sorted(m["target"]["arch"] for m in initramfs), sorted(ASSEMBLER.ARCHES)

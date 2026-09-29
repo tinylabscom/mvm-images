@@ -368,6 +368,47 @@ jobs:
             staging/default-microvm-meta-${{ matrix.arch }}.json
             staging/default-microvm-${{ matrix.arch }}.sbom.txt
             staging/default-microvm-${{ matrix.arch }}-checksums-sha256.txt
+      # The dev (accessible) variant of the same base, published as its own
+      # set members so a consumer that boots the dev slot fetches verified
+      # bytes instead of pair-building them (the documented-surface e2e is
+      # the first consumer). Same store layout as prod; only the staged
+      # names carry `-dev`.
+      - name: Build default microVM image (dev variant)
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          SYSTEM="${ARCH}-linux"
+          DEV_STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.default-tenant.dev" \
+            --impure --no-link --print-out-paths | head -1)
+          echo "DEV_STORE_PATH=${DEV_STORE_PATH}" >> "$GITHUB_ENV"
+          # The dev variant is unsealed: it emits no dm-verity sidecars.
+          cp -L "$DEV_STORE_PATH/vmlinux"       "staging/default-microvm-dev-vmlinux-${ARCH}"
+          cp -L "$DEV_STORE_PATH/rootfs.ext4"   "staging/default-microvm-dev-rootfs-${ARCH}.ext4"
+          cp -L "$DEV_STORE_PATH/mvm-meta.json" "staging/default-microvm-dev-meta-${ARCH}.json"
+      - name: Generate default microVM dev SBOM and checksums
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          nix-store --query --requisites "$DEV_STORE_PATH" > "staging/default-microvm-dev-${ARCH}.sbom.txt"
+          cd staging
+          sha256sum \
+            "default-microvm-dev-vmlinux-${ARCH}" \
+            "default-microvm-dev-rootfs-${ARCH}.ext4" \
+            "default-microvm-dev-meta-${ARCH}.json" \
+            > "default-microvm-dev-${ARCH}-checksums-sha256.txt"
+      - name: Upload default microVM dev image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: default-microvm-dev-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            staging/default-microvm-dev-vmlinux-${{ matrix.arch }}
+            staging/default-microvm-dev-rootfs-${{ matrix.arch }}.ext4
+            staging/default-microvm-dev-meta-${{ matrix.arch }}.json
+            staging/default-microvm-dev-${{ matrix.arch }}.sbom.txt
+            staging/default-microvm-dev-${{ matrix.arch }}-checksums-sha256.txt
 
   rootless-microvm:
     needs: source-drift
