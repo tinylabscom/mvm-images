@@ -382,11 +382,10 @@ jobs:
           DEV_STORE_PATH=$(nix build ".#legacyPackages.${SYSTEM}.default-tenant.dev" \
             --impure --no-link --print-out-paths | head -1)
           echo "DEV_STORE_PATH=${DEV_STORE_PATH}" >> "$GITHUB_ENV"
-          cp -L "$DEV_STORE_PATH/vmlinux"         "staging/default-microvm-dev-vmlinux-${ARCH}"
-          cp -L "$DEV_STORE_PATH/rootfs.ext4"     "staging/default-microvm-dev-rootfs-${ARCH}.ext4"
-          cp -L "$DEV_STORE_PATH/rootfs.verity"   "staging/default-microvm-dev-rootfs-${ARCH}.verity"
-          cp -L "$DEV_STORE_PATH/rootfs.roothash" "staging/default-microvm-dev-rootfs-${ARCH}.roothash"
-          cp -L "$DEV_STORE_PATH/mvm-meta.json"   "staging/default-microvm-dev-meta-${ARCH}.json"
+          # The dev variant is unsealed: it emits no dm-verity sidecars.
+          cp -L "$DEV_STORE_PATH/vmlinux"       "staging/default-microvm-dev-vmlinux-${ARCH}"
+          cp -L "$DEV_STORE_PATH/rootfs.ext4"   "staging/default-microvm-dev-rootfs-${ARCH}.ext4"
+          cp -L "$DEV_STORE_PATH/mvm-meta.json" "staging/default-microvm-dev-meta-${ARCH}.json"
       - name: Generate default microVM dev SBOM and checksums
         env:
           ARCH: ${{ matrix.arch }}
@@ -397,8 +396,6 @@ jobs:
           sha256sum \
             "default-microvm-dev-vmlinux-${ARCH}" \
             "default-microvm-dev-rootfs-${ARCH}.ext4" \
-            "default-microvm-dev-rootfs-${ARCH}.verity" \
-            "default-microvm-dev-rootfs-${ARCH}.roothash" \
             "default-microvm-dev-meta-${ARCH}.json" \
             > "default-microvm-dev-${ARCH}-checksums-sha256.txt"
       - name: Upload default microVM dev image
@@ -409,8 +406,6 @@ jobs:
           path: |
             staging/default-microvm-dev-vmlinux-${{ matrix.arch }}
             staging/default-microvm-dev-rootfs-${{ matrix.arch }}.ext4
-            staging/default-microvm-dev-rootfs-${{ matrix.arch }}.verity
-            staging/default-microvm-dev-rootfs-${{ matrix.arch }}.roothash
             staging/default-microvm-dev-meta-${{ matrix.arch }}.json
             staging/default-microvm-dev-${{ matrix.arch }}.sbom.txt
             staging/default-microvm-dev-${{ matrix.arch }}-checksums-sha256.txt

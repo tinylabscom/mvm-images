@@ -195,16 +195,10 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
                     f"default-workload-rootfs-dev-{arch}",
                     {"workload_rootfs": "default_tenant"},
                     target,
-                    (
-                        Artifact(f"default-microvm-dev-rootfs-{arch}.ext4", "ext4"),
-                        Artifact(
-                            f"default-microvm-dev-rootfs-{arch}.verity", "verity_hash_tree"
-                        ),
-                        Artifact(
-                            f"default-microvm-dev-rootfs-{arch}.roothash", "verity_root_hash"
-                        ),
-                    ),
-                    ("virtio_blk", "dm_verity"),
+                    # The dev build is unsealed: no dm-verity sidecars, the
+                    # same two files the dev slot installs from a pair build.
+                    (Artifact(f"default-microvm-dev-rootfs-{arch}.ext4", "ext4"),),
+                    ("virtio_blk",),
                     build_mode="dev",
                 ),
                 Member(
