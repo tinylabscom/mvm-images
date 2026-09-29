@@ -172,11 +172,13 @@ just release 0.1.0
 ```
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) then builds
-every role on both guest architectures, assembles all 19 roles in the current
-consumer train, emits a signed pack manifest and SPDX SBOM for each member,
-signs the root `image-set.json` with Sigstore keyless OIDC, and verifies the
-lock, signing identity, completeness and every artifact digest with the exact
-`mvm` commit pinned by this repository. Only after those checks pass does the
+every role on both guest architectures — the production builds plus the dev
+(accessible) variant of the default tenant — assembles the complete set,
+emits a signed pack manifest and SPDX SBOM for each member, and stamps the
+SDK sidecar members with the source fingerprint of the cdylib they were
+built from. It signs the root `image-set.json` with Sigstore keyless OIDC
+and verifies the lock, signing identity, completeness and every artifact
+digest with the exact `mvm` commit pinned by this repository. Only after those checks pass does the
 protected `image-release` environment create the immutable
 [GitHub Release](https://github.com/tinylabscom/mvm-images/releases). A missing
 role or architecture therefore produces no release.

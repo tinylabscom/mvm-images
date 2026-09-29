@@ -38,6 +38,12 @@ class Member:
     artifacts: tuple[Artifact, ...]
     capabilities: tuple[str, ...] = ()
     bootable: bool = False
+    # Which build of the role this member carries; None is the production
+    # build. Only the workload bases publish a dev variant.
+    build_mode: str | None = None
+    # Fingerprint of the sources the member was built from (today only the
+    # SDK sidecar publishes one); None omits the field.
+    source_fingerprint: str | None = None
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -56,7 +62,63 @@ def compact_json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-def member_specs() -> tuple[Member, ...]:
+# The exact input list of mvm's `sdk_cdylib_source_fingerprint`
+# (crates/mvm-build/src/guest_agent_build.rs). The consumer recomputes the
+# fingerprint with that Rust function on its own tree; this port exists so
+# the producer can publish it without a Rust toolchain. A drift between the
+# two is caught by the known-answer test in scripts/tests/: the consumer
+# then sees a mismatch and pair-builds, which is the safe direction, but
+# the test exists so the port never silently diverges.
+SDK_CDYLIB_INPUTS = (
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/mvm-contract/Cargo.toml",
+    "crates/mvm-contract/src",
+    "crates/mvm-core/Cargo.toml",
+    "crates/mvm-core/src",
+    "crates/mvm-agentd/Cargo.toml",
+    "crates/mvm-agentd/src",
+    "crates/mvm-host-services/Cargo.toml",
+    "crates/mvm-host-services/src",
+)
+SDK_CDYLIB_DOMAIN = b"mvm-host-services-cdylib-input-v1\0"
+
+
+def _hash_file_into(hasher: "hashlib._Hash", rel: str, path: Path) -> None:
+    data = path.read_bytes()
+    hasher.update(rel.encode())
+    hasher.update(b"\0")
+    hasher.update(len(data).to_bytes(8, "little"))
+    hasher.update(b"\0")
+    hasher.update(data)
+    hasher.update(b"\0")
+
+
+def _hash_dir_into(hasher: "hashlib._Hash", prefix: str, directory: Path) -> None:
+    for entry in sorted(directory.iterdir(), key=lambda e: e.name):
+        rel = f"{prefix}/{entry.name}"
+        if entry.is_dir():
+            _hash_dir_into(hasher, rel, entry)
+        elif entry.is_file():
+            _hash_file_into(hasher, rel, entry)
+
+
+def sdk_cdylib_fingerprint(mvm_source: Path) -> str:
+    """The producer half of mvm's `sdk_cdylib_source_fingerprint`."""
+    hasher = hashlib.sha256()
+    hasher.update(SDK_CDYLIB_DOMAIN)
+    for rel in SDK_CDYLIB_INPUTS:
+        path = mvm_source / rel
+        if path.is_dir():
+            _hash_dir_into(hasher, rel, path)
+        elif path.is_file():
+            _hash_file_into(hasher, rel, path)
+        else:
+            raise Refusal(f"fingerprint input missing from mvm source: {rel}")
+    return hasher.hexdigest()
+
+
+def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
     members: list[Member] = []
     for arch in ARCHES:
         kernel = {"kernel": "elf" if arch == "x86_64" else "image"}
@@ -121,6 +183,31 @@ def member_specs() -> tuple[Member, ...]:
                     ("virtio_blk", "dm_verity"),
                 ),
                 Member(
+                    f"default-workload-kernel-dev-{arch}",
+                    {"workload_kernel": "default_tenant"},
+                    target,
+                    (Artifact(f"default-microvm-dev-vmlinux-{arch}", kernel),),
+                    ("virtio_vsock",),
+                    True,
+                    build_mode="dev",
+                ),
+                Member(
+                    f"default-workload-rootfs-dev-{arch}",
+                    {"workload_rootfs": "default_tenant"},
+                    target,
+                    (
+                        Artifact(f"default-microvm-dev-rootfs-{arch}.ext4", "ext4"),
+                        Artifact(
+                            f"default-microvm-dev-rootfs-{arch}.verity", "verity_hash_tree"
+                        ),
+                        Artifact(
+                            f"default-microvm-dev-rootfs-{arch}.roothash", "verity_root_hash"
+                        ),
+                    ),
+                    ("virtio_blk", "dm_verity"),
+                    build_mode="dev",
+                ),
+                Member(
                     f"runtime-overlay-{arch}",
                     "runtime_overlay",
                     target,
@@ -131,12 +218,14 @@ def member_specs() -> tuple[Member, ...]:
                     {"sdk_sidecar": "glibc"},
                     target,
                     (Artifact(f"sdk-sidecar-{arch}-glibc.tar.gz", "tar_gz"),),
+                    source_fingerprint=sdk_fingerprint,
                 ),
                 Member(
                     f"sdk-sidecar-{arch}-musl",
                     {"sdk_sidecar": "musl"},
                     target,
                     (Artifact(f"sdk-sidecar-{arch}-musl.tar.gz", "tar_gz"),),
+                    source_fingerprint=sdk_fingerprint,
                 ),
                 Member(
                     f"initramfs-{arch}",
@@ -374,7 +463,7 @@ def assemble(args: argparse.Namespace) -> None:
         raise Refusal("issued-at must include a timezone")
 
     ensure_stage0_aliases(assets)
-    members = member_specs()
+    members = member_specs(sdk_cdylib_fingerprint(args.mvm_source.resolve()))
     for member in members:
         for artifact in member.artifacts:
             require_file(assets / artifact.name)
@@ -403,6 +492,10 @@ def assemble(args: argparse.Namespace) -> None:
             "role": member.role,
             "target": member.target,
         }
+        if member.build_mode is not None:
+            rendered["build_mode"] = member.build_mode
+        if member.source_fingerprint is not None:
+            rendered["source_fingerprint"] = member.source_fingerprint
         if member.bootable:
             rendered["boot_protocol"] = "linux_direct"
         rendered.update(
