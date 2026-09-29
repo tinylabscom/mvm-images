@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The kernel config budget still lives in mvm's xtask gate. Read it from the
-# pinned mvm commit rather than keeping a second copy of the numbers here.
+# The kernel config budget still lives in mvm's xtask gate (renamed
+# check_kernel_config_budget.rs -> kernel_config_budget.rs when mvm's W8
+# retired the standalone gate). Read it from the pinned mvm commit rather
+# than keeping a second copy of the numbers here.
 # shellcheck source=scripts/mvm-source.sh
 . "$(dirname "${BASH_SOURCE[0]}")/mvm-source.sh"
 
@@ -65,7 +67,7 @@ printf '{"kernel_version":"%s","config_hash":"%s","artifact_hash":"%s"}\n' \
 symbol_count=$(grep -c '=y$' "$config")
 budget_name="BUDGET_${arch^^}"
 budget=$(grep -oP "${budget_name}: usize = \K[0-9]+" \
-  "$(mvm_source_dir)/xtask/src/check_kernel_config_budget.rs")
+  "$(mvm_source_dir)/xtask/src/kernel_config_budget.rs")
 echo "workload kernel ${arch}: ${symbol_count} =y symbols (budget ${budget})"
 if [[ "$symbol_count" -gt "$budget" ]]; then
   echo "workload kernel ${arch} has ${symbol_count} built-in symbols, over budget ${budget}" >&2

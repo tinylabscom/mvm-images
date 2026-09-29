@@ -7,7 +7,22 @@ diverged from mvm can be told apart from one that was changed on purpose.
 
 ## The pin
 
-All copies were taken at mvm commit
+The pin is mvm `2487feefa5b404b2968cab7de0ab796548f08583` (release v0.18.3),
+advanced past mvm's W8 deletion of its in-tree image tree
+(tinylabscom/mvm 62e1116866): from this pin on, mvm builds no image, and the
+recipes here — `images/`, `kernel/`, `qemu-wasm/` and the build scripts — are
+the canonical sources. The source-drift mirror retires with the advance:
+`nix/images/*`, the qemu-wasm package recipes and
+`scripts/build-kernel-artifacts.sh` no longer exist upstream to compare
+against, so their `sources/files.tsv` rows are gone, and the nixpkgs and
+microvm.nix pins are owned outright by this root `flake.lock` (mvm's per-image
+locks are deleted too). The three files mvm still carries that are mirrored
+here — `assert-sidecar-coherent.sh` and the two maintained qemu-wasm smoke
+harness scripts — keep their drift rows. The artifact `VERSION` still comes
+from the pinned mvm `Cargo.toml`, so a set is built for exactly the CLI
+version of the mvm commit it pins.
+
+For the history: all copies were taken at mvm commit
 `5460c6e11298082e754ce9433df9af9f61de71d5`, advanced from
 `1f2db79b319c8e74be5e09eeb337fac6d2ddf788` (itself advanced from
 `e97eea9ace29d831ee0c755fef758d7e289ca831`). The later pins carry the
@@ -38,11 +53,10 @@ once, by the `mvm` input in [`flake.nix`](flake.nix) and its entry in
 [`flake.lock`](flake.lock). Scripts read it from `flake.lock`; nothing else
 stores it.
 
-nixpkgs and microvm.nix are pinned to what mvm's image flakes lock at that
-commit: `nixpkgs` and `microvm` from `nix/images/{builder-vm,default-tenant,
-runtime-overlay}/flake.lock`, and `nixpkgs-initramfs` from
-`nix/images/initramfs/flake.lock`, which pins a different nixpkgs revision.
-`kernel/flake.lock` is copied unchanged.
+nixpkgs and microvm.nix are pinned by this root `flake.lock`; until the
+v0.18.3 pin advance they tracked what mvm's in-tree image flakes locked, but
+mvm's W8 deletion removed those locks, and the pins are owned here now.
+`kernel/flake.lock` is a local lock (its own flake, unchanged by the move).
 
 ## Copied files
 
@@ -53,21 +67,19 @@ entry against mvm at the pinned commit, with only the patch under
 [`sources/ignored.tsv`](sources/ignored.tsv) accounts for upstream files that
 are intentionally not base-image sources and requires a reason for each one.
 
+At the v0.18.3 pin only these three mirrors remain:
+
 | mvm | here | changed |
 |---|---|---|
-| `nix/images/builder-vm/flake.nix` | `images/builder-vm/image.nix` | yes |
-| `nix/images/default-tenant/flake.nix` | `images/default-tenant/image.nix` | yes |
-| `nix/images/runtime-overlay/flake.nix` | `images/runtime-overlay/image.nix` | yes |
-| `nix/images/initramfs/flake.nix` | `images/initramfs/image.nix` | yes |
-| `nix/images/kernel/{README.md,base.nix,builder.nix,workload.nix,flake.nix,flake.lock}` | `kernel/` | no |
-| `nix/packages/qemu-wasm.nix` | `qemu-wasm/qemu-wasm.nix` | yes |
-| `nix/packages/qemu-wasm-smoke-image.nix` | `qemu-wasm/qemu-wasm-smoke-image.nix` | yes |
-| `nix/packages/qemu-wasm-smoke-pack.nix` | `qemu-wasm/qemu-wasm-smoke-pack.nix` | no |
-| `nix/packages/emscripten-cross.meson` | `qemu-wasm/emscripten-cross.meson` | no |
 | `nix/packaging/release/assert-sidecar-coherent.sh` | `packaging/assert-sidecar-coherent.sh` | no |
-| `scripts/build-kernel-artifacts.sh` | `scripts/build-kernel-artifacts.sh` | yes |
 | `scripts/run-qemu-wasm-smoke-chromium.py` | `scripts/` | no |
 | `scripts/serve-qemu-wasm-smoke-pack.py` | `scripts/` | no |
+
+The image, kernel and qemu-wasm recipes this file's history records as copies
+(`images/`, `kernel/`, `qemu-wasm/`, `scripts/build-kernel-artifacts.sh`) are
+no longer mirrors: mvm's W8 deletion removed their upstream counterparts, and
+they are the canonical sources here now. Their rows retired from
+`sources/files.tsv` with the pin advance.
 
 ## Rewrites
 
@@ -156,8 +168,9 @@ Every change is one of these, and nothing else.
   `static-crates-cargo-deps.nix`, and the host packages. They are compiled
   against mvm's `Cargo.lock` and stay beside it; the images consume them
   through the pinned input.
-- The per-image `flake.lock` files, replaced by the root `flake.lock`. The
-  drift check compares its pins against them.
+- The per-image `flake.lock` files, replaced by the root `flake.lock`, which
+  now owns the nixpkgs and microvm.nix pins outright (mvm's image locks are
+  deleted with its image tree, so there is nothing left to compare against).
 - `nix/packaging/release/assert-init-shebang.sh` and `assert-kernel-format.sh`,
   which the plan does not move. The build workflow runs them from the pinned
   mvm source.

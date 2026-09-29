@@ -32,10 +32,11 @@
   # (`scripts/check-local-mvm-override.sh` holds that), so a difference in the
   # images is a difference in the mvm source and nothing else.
   #
-  # nixpkgs and microvm.nix are pinned to the revisions `mvm`'s image flakes
-  # lock at that commit. The initramfs has its own nixpkgs pin there, so it
-  # has its own input here; converging the two changes the initramfs bytes and
-  # is a decision of its own, not something to fold into a move.
+  # nixpkgs and microvm.nix were pinned to the revisions `mvm`'s in-tree image
+  # flakes locked; W8 deleted those flakes from `mvm`, so this root lock is
+  # now the sole owner of the pins. The initramfs keeps its own nixpkgs
+  # input; converging the two changes the initramfs bytes and is a decision
+  # of its own, not something to fold into a move.
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
@@ -45,7 +46,7 @@
     };
     nixpkgs-initramfs.url = "github:NixOS/nixpkgs/nixos-25.11";
     mvm = {
-      url = "github:tinylabscom/mvm/8c5f064f28f5dced581dd7159412c2a60687ca23";
+      url = "github:tinylabscom/mvm/2487feefa5b404b2968cab7de0ab796548f08583";
       flake = false;
     };
   };

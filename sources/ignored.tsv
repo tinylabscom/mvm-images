@@ -1,6 +1,10 @@
 # Upstream mvm image-tree files deliberately not copied here, as
 # <path in mvm> TAB <reason>. The drift gate verifies each path still exists
 # at the pinned commit and accounts for it when scanning nix/images/.
-nix/images/examples/llm-agent/default.nix	Workload-specific example; application and template composition does not belong in the base-image repository.
-nix/images/kernel/workload-k8s.nix	Kubernetes-specific kernel with guest bridge/veth/CNI-oriented facilities; rejected in favor of a generic NIC-less rootless base contract.
-nix/images/version.nix	The artifact VERSION is read from the pinned mvm Cargo.toml [workspace.package].version, so a hand-kept copy has nothing left to pin.
+#
+# The pin advanced past mvm's W8 deletion (tinylabscom/mvm 62e1116866,
+# release v0.18.3), which removed mvm's in-tree image tree outright — the
+# three rows that used to record why nix/images/examples/llm-agent,
+# nix/images/kernel/workload-k8s.nix and nix/images/version.nix were not
+# copied retired with it. The reasons stand in the history of this file;
+# there is no upstream image tree left to ignore files from.
