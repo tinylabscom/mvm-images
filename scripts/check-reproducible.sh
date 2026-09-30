@@ -3,7 +3,7 @@
 # final derivation to be byte-for-byte reproducible.
 #
 # Usage: scripts/check-reproducible.sh \
-#   <aarch64|x86_64> <builder-vm|default-tenant|rootless-tenant> <out-dir>
+#   <aarch64|x86_64> <builder-vm|default-tenant|rootless-tenant|runtime-overlay> <out-dir>
 #
 # The builder role evaluates pure: at boot ABI 1 it bakes no mvm host
 # binaries — the boot contract supplies them from mvmctl's payload — so it
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-arch="${1:?usage: check-reproducible.sh <arch> <role> <out-dir>}"
+arch="${1:?usage: check-reproducible.sh <arch> <builder-vm|default-tenant|rootless-tenant|runtime-overlay> <out-dir>}"
 role="${2:?role}"
 out="${3:?out dir}"
 system="${arch}-linux"
@@ -32,6 +32,10 @@ case "$role" in
   rootless-tenant)
     attrs=(default)
     impure=(--impure)
+    ;;
+  runtime-overlay)
+    attrs=(default)
+    impure=()
     ;;
   *) echo "unsupported role: $role" >&2; exit 2 ;;
 esac
@@ -67,7 +71,8 @@ for attr in "${attrs[@]}"; do
   mkdir -p "$stage"
   for file in \
     vmlinux kernel.img rootfs.ext4 rootfs.verity rootfs.roothash \
-    mvm-meta.json cmdline.txt manifest.json
+    mvm-meta.json cmdline.txt manifest.json \
+    overlay.ext4 overlay.verity overlay.roothash VERSION
   do
     if [ -e "$first/$file" ]; then
       cp -L "$first/$file" "$stage/$file"
