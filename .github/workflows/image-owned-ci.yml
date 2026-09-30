@@ -18,15 +18,10 @@ jobs:
       - name: Install just (command runner)
         run: |
           set -euo pipefail
-          arch=$(uname -m)
-          case "$arch" in
-            x86_64) tarball="just-x86_64-unknown-linux-musl.tar.gz" ;;
-            aarch64) tarball="just-aarch64-unknown-linux-musl.tar.gz" ;;
-            *) echo "unsupported arch $arch"; exit 1 ;;
-          esac
-          curl -fSL "https://github.com/casey/just/releases/latest/download/$tarball" -o /tmp/just.tgz
-          tar -C /tmp -xzf /tmp/just.tgz
-          sudo install -m0755 /tmp/just /usr/local/bin/just
+          # Install Rust toolchain and compile `just` so we have a known-good binary
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          cargo install --locked just
       - name: Build image derivations (fast subset)
         run: |
           set -euo pipefail
