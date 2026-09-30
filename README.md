@@ -363,6 +363,12 @@ Kconfig did not restore a built-in or modular network device. The fast suite
 runs on every pull request; the browser boot is the hardware-independent E2E
 lane, while native QEMU and Firecracker commands are for KVM-capable runners.
 
+The builder VM output also packages its resolved `kernel.config` beside the
+kernel, checks it during the image derivation, and publishes it as a digest-pinned
+image-set artifact. The cache contract records that no network devices are
+enabled; contract-5 consumers validate the published config before reusing a
+builder image.
+
 `.github/workflows/reproduce.yml` (`scripts/check-reproducible.sh`) rebuilds
 the canonical `builder-vm`, `default-tenant`, and `rootless-tenant` roles on
 both architectures. Nix rebuilds each final derivation instead of accepting

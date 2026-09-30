@@ -117,7 +117,16 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertEqual(len(manifest["members"]), 25)
         self.assertEqual(manifest["set_version"], "0.1.0")
         self.assertEqual(manifest["compatibility"]["guest_agent_protocol"], {"min": 2, "max": 3})
-        self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 4)
+        self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 5)
+        for arch in ASSEMBLER.ARCHES:
+            builder = next(
+                member for member in manifest["members"]
+                if member["role"] == "builder_vm" and member["target"] == {"arch": arch}
+            )
+            self.assertIn(
+                f"builder-vm-{arch}.kernel.config",
+                {artifact["name"] for artifact in builder["artifacts"]},
+            )
         self.assertEqual(
             manifest["compatibility"]["builder_boot_abi"],
             ASSEMBLER.builder_boot_abi(ROOT),

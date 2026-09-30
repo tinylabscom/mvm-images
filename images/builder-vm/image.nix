@@ -69,6 +69,7 @@
       # the derivation evaluates pure — no rustPlatform.buildRustPackage
       # calls are permitted in this flake.
       bootAbi = import ./boot-abi.nix;
+      cacheContractVersion = import ./cache-contract.nix;
 
       # Filter list lives at nix/lib/workspace-filter.nix so the three
       # flakes that ingest the host workspace (this one, builder/,
@@ -304,6 +305,7 @@
           # base disables. `CONFIG_MODULES=n` so the kernel has only what
           # `mvm-host-vm-init` uses built-in — no driver modules tree.
           kernelPkg = import ../../kernel/builder.nix { inherit pkgs; base = kernelBaseFor pkgs; };
+          kernelConfig = kernelPkg.passthru.configfile;
           rootfs = mkBuilderVmRootfs { inherit system interactive; };
           kernelFile =
             if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "bzImage";
@@ -316,6 +318,7 @@
         in
         pkgs.runCommand imageName
           {
+            nativeBuildInputs = [ pkgs.python3 ];
             passthru = {
               inherit rootfs;
               kernel = kernelPkg;
@@ -353,6 +356,11 @@
 
             chmod 0644 $out/vmlinux $out/rootfs.ext4
 
+            cp ${kernelConfig} $out/kernel.config
+            python3 ${../../scripts/check_no_network_devices.py} config \
+              --kernel-config $out/kernel.config
+            chmod 0644 $out/kernel.config
+
             # Canonical kernel cmdline — `LibkrunBuilderVm` reads this
             # and threads it into `mvm_libkrun::KrunContext.kernel_cmdline`.
             # Living next to the kernel makes the binding atomic with
@@ -364,19 +372,23 @@
             # verifies these against the release manifest before
             # extracting.
             kernel_sha=$(sha256sum $out/vmlinux | cut -d' ' -f1)
+            config_sha=$(sha256sum $out/kernel.config | cut -d' ' -f1)
             rootfs_sha=$(sha256sum $out/rootfs.ext4 | cut -d' ' -f1)
             kernel_size=$(stat -c%s $out/vmlinux)
+            config_size=$(stat -c%s $out/kernel.config)
             rootfs_size=$(stat -c%s $out/rootfs.ext4)
             cat > $out/manifest.json <<MANIFEST
             {
               "name": "${manifestName}",
               "system": "${system}",
               "vmlinux":      { "sha256": "$kernel_sha", "size": $kernel_size },
+              "kernel_config": { "sha256": "$config_sha", "size": $config_size },
               "rootfs_ext4":  { "sha256": "$rootfs_sha", "size": $rootfs_size },
               "cmdline": "${builderCmdline}",
-              "cache_contract_version": 4,
+              "cache_contract_version": ${toString cacheContractVersion},
               "runtime_overlay_ready": true,
-              "vsock_egress_ready": true
+              "vsock_egress_ready": true,
+              "no_network_devices_ready": true
             }
             MANIFEST
           '';
@@ -409,13 +421,15 @@
 
           rootfs_sha=$(sha256sum $out/rootfs.ext4 | cut -d' ' -f1)
           rootfs_size=$(stat -c%s $out/rootfs.ext4)
+          # This is not a bootable builder cache: it has no kernel or checked
+          # kernel config, so it must not assert no_network_devices_ready.
           cat > $out/manifest.json <<MANIFEST
           {
             "name": "mvm-builder-vm-stage0-rootfs",
             "system": "${system}",
             "rootfs_ext4": { "sha256": "$rootfs_sha", "size": $rootfs_size },
             "cmdline": "${builderCmdline}",
-            "cache_contract_version": 4,
+            "cache_contract_version": ${toString cacheContractVersion},
             "runtime_overlay_ready": true,
             "vsock_egress_ready": true,
             "stage0_rootfs_only": true

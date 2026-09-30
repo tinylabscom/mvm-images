@@ -67,10 +67,9 @@ base.mkKernel {
     "NETFILTER_XT_MATCH_STATE" "NETFILTER_XT_MATCH_CONNTRACK"
     "NETFILTER_XT_MARK"
 
-    # IPv6 is a workload-kernel feature, not a shared one: the builder VM
-    # reaches its network over an IPv4 virtio-net gateway. Force-drop it here
-    # because defconfig enables it, and its optional IPsec selectors would
-    # otherwise re-enable the shared XFRM framework that base.nix forbids.
+    # The builder's mediated egress travels over vsock. Drop IPv6 because its
+    # optional IPsec selectors would otherwise re-enable the shared XFRM
+    # framework that base.nix forbids.
     "IPV6"
   ];
 }

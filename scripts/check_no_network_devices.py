@@ -46,6 +46,8 @@ def check_resolved_kernel_configs(paths: list[Path]) -> None:
     failures = []
     for path in paths:
         text = path.read_text(encoding="utf-8")
+        if "# CONFIG_NETDEVICES is not set" not in text:
+            failures.append(f"{path}: CONFIG_NETDEVICES is not explicitly disabled")
         for symbol in forbidden:
             if f"CONFIG_{symbol}=y" in text or f"CONFIG_{symbol}=m" in text:
                 failures.append(f"{path}: CONFIG_{symbol} is enabled")
@@ -140,7 +142,7 @@ def main() -> int:
     parser.add_argument(
         "section",
         nargs="?",
-        choices=("kernel", "qemu-wasm", "e2e"),
+        choices=("kernel", "qemu-wasm", "e2e", "config"),
         help="check one section instead of the complete contract",
     )
     parser.add_argument(
@@ -157,7 +159,11 @@ def main() -> int:
         "e2e": check_e2e_harness_contract,
     }
     try:
-        checks[args.section]() if args.section else run_all()
+        if args.section == "config":
+            if not args.kernel_config:
+                raise ContractError("config check requires --kernel-config")
+        else:
+            checks[args.section]() if args.section else run_all()
         if args.kernel_config:
             check_resolved_kernel_configs(args.kernel_config)
     except ContractError as exc:
