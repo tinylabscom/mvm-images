@@ -14,14 +14,24 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Nix
-        uses: cachix/install-nix-action@v23
-        with:
-          nix_path: "nixpkgs=github:NixOS/nixpkgs"
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa
+      - name: Install just (command runner)
+        run: |
+          set -euo pipefail
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) tarball="just-x86_64-unknown-linux-musl.tar.gz" ;;
+            aarch64) tarball="just-aarch64-unknown-linux-musl.tar.gz" ;;
+            *) echo "unsupported arch $arch"; exit 1 ;;
+          esac
+          curl -fSL "https://github.com/casey/just/releases/latest/download/$tarball" -o /tmp/just.tgz
+          tar -C /tmp -xzf /tmp/just.tgz
+          sudo install -m0755 /tmp/just /usr/local/bin/just
       - name: Build image derivations (fast subset)
         run: |
           set -euo pipefail
           # Build the runtime overlay and default-tenant derivations (x86_64)
-          just build runtime-overlay default 
+          just build runtime-overlay default
       - name: Run image tests (QEMU smoke)
         run: |
           set -euo pipefail
@@ -45,4 +55,3 @@ jobs:
         with:
           name: qemu-boot-witness
           path: /tmp/qemu-boot-witness.json
-
