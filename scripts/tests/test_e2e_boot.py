@@ -19,7 +19,10 @@ class E2EBootPlanTests(unittest.TestCase):
             guest_cid=9,
         )
         self.assertIn("-nodefaults", command)
-        self.assertTrue(any("vhost-vsock" in arg for arg in command))
+        if e2e_boot.host_supports_vhost_vsock():
+            self.assertTrue(any("vhost-vsock" in arg for arg in command))
+        else:
+            self.assertFalse(any("vhost-vsock" in arg for arg in command))
         e2e_boot.assert_no_network_devices(command)
 
     def test_qemu_tcg_plan_keeps_explicit_vsock_and_uses_emulated_cpu(self):
@@ -34,7 +37,10 @@ class E2EBootPlanTests(unittest.TestCase):
         self.assertIn("q35,accel=tcg", command)
         self.assertIn("max", command)
         self.assertTrue(any("rootfstype=ext4" in arg for arg in command))
-        self.assertTrue(any("vhost-vsock" in arg for arg in command))
+        if e2e_boot.host_supports_vhost_vsock():
+            self.assertTrue(any("vhost-vsock" in arg for arg in command))
+        else:
+            self.assertFalse(any("vhost-vsock" in arg for arg in command))
         e2e_boot.assert_no_network_devices(command)
 
     def test_qemu_runtime_overlay_is_read_only_second_block_device(self):
