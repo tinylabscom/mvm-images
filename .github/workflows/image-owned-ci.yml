@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           arch=$(uname -m)
           case "$arch" in
-            x86_64|amd64) fc_arch=x86_64 ;; 
+            x86_64|amd64) fc_arch=x86_64 ;;
             aarch64|arm64) fc_arch=aarch64 ;;
             *) fc_arch=x86_64 ;;
           esac
