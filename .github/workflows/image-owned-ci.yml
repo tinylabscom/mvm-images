@@ -36,8 +36,10 @@ jobs:
             echo "system=$system"
             STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths | head -n1)"
             echo "STORE=$STORE"
+            # Ensure ./result is a writable directory (nix build may create a symlink)
+            if [ -L result ] || [ -e result ]; then rm -rf result; fi
             mkdir -p result
-            # Recursively find and copy common kernel/rootfs artifact names
+            # Recursively find and copy common kernel/rootfs artifact names into a clean result/
             find "$STORE" -maxdepth 6 -type f \( -name 'kernel.img' -o -name 'vmlinux' -o -name 'rootfs.bin' -o -name 'rootfs.ext4' \) -exec cp -L {} result/ \; || true
           fi
       - name: Run image tests (QEMU smoke)
