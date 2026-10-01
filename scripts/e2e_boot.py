@@ -116,20 +116,6 @@ def qemu_command(
                 "virtio-blk-pci,drive=runtime",
             ]
         )
-<<<<<<< HEAD
-    if accel == "kvm":
-        # vhost-vsock requires access to /dev/vhost-vsock and typically needs
-        # KVM privileges. On hosted runners running under TCG or without KVM
-        # access this will fail with "Permission denied". Only attach the
-        # vhost-vsock device when using KVM.
-        command.extend(["-device", f"vhost-vsock-pci,guest-cid={guest_cid}"])
-    else:
-        # Skip vhost-vsock on hosts without KVM (hosted runners). The e2e
-        # harness only needs the serial output readiness marker for smoke
-        # verification, so vsock is optional here.
-        pass
-=======
-
     # Attach vhost-vsock only when the host exposes a usable /dev/vhost-vsock.
     # On GitHub-hosted runners this node is often absent or inaccessible; in that
     # case omit the device so the guest can still boot under TCG and emit the
@@ -142,7 +128,6 @@ def qemu_command(
             file=sys.stderr,
         )
 
->>>>>>> 3f8a896 (ci(image): omit vhost-vsock on hosts where /dev/vhost-vsock is unavailable so QEMU boot can run on hosted runners)
     assert_no_network_devices(command)
     return command
 

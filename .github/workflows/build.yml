@@ -65,8 +65,8 @@ jobs:
       - name: Restore the Nix store cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
-          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          primary-key: nix-x86_64-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-x86_64-${{ github.job }}-
           # Bound what we save: the overlay's shim closure pulls far more than
           # the 10 GiB Actions cache holds, so keep the most valuable paths.
           gc-max-store-size: 2G
@@ -89,8 +89,8 @@ jobs:
       - name: Restore the Nix store cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
-          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          primary-key: nix-x86_64-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-x86_64-${{ github.job }}-
           # Bound what we save: the overlay's shim closure pulls far more than
           # the 10 GiB Actions cache holds, so keep the most valuable paths.
           gc-max-store-size: 2G
@@ -626,8 +626,8 @@ jobs:
       - name: Restore the Nix store cache
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-${{ matrix.arch }}-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
-          restore-prefixes-first-match: nix-${{ matrix.arch }}-${{ github.job }}-
+          primary-key: nix-x86_64-${{ github.job }}-${{ hashFiles('flake.lock', 'flake.nix', 'images/**', 'kernel/**') }}
+          restore-prefixes-first-match: nix-x86_64-${{ github.job }}-
           # Bound what we save: the overlay's shim closure pulls far more than
           # the 10 GiB Actions cache holds, so keep the most valuable paths.
           gc-max-store-size: 2G

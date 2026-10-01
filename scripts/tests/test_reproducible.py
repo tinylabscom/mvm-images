@@ -10,7 +10,7 @@ class CanonicalReproducibilityTests(unittest.TestCase):
         script = (ROOT / "scripts/check-reproducible.sh").read_text()
         workflow = (ROOT / ".github/workflows/reproduce.yml").read_text()
 
-        for role in ("builder-vm", "default-tenant", "rootless-tenant"):
+        for role in ("builder-vm", "default-tenant", "rootless-tenant", "runtime-overlay"):
             self.assertIn(role, script)
             self.assertIn(role, workflow)
         self.assertIn("--rebuild", script)
