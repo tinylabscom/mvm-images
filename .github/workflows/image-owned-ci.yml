@@ -31,6 +31,22 @@ jobs:
           arch=$(uname -m)
           if [ "$arch" = "x86_64" ] || [ "$arch" = "amd64" ]; then
             just build qemu-wasm qemu-wasm-smoke-pack
+            # Locate the nix store result(s) and copy expected artifacts into ./result
+            system=$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')-linux
+            echo "system=$system"
+            STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths | head -n1)"
+            echo "STORE=$STORE"
+            mkdir -p result
+            # Copy known artifact names if present
+            for f in kernel.img vmlinux rootfs.bin; do
+              if [ -e "$STORE/$f" ]; then cp -L "$STORE/$f" result/; fi
+            done
+            # Search one level deep for matching files and copy them
+            for d in "$STORE"/*; do
+              if [ -e "$d/kernel.img" ]; then cp -L "$d/kernel.img" result/; fi
+              if [ -e "$d/rootfs.bin" ]; then cp -L "$d/rootfs.bin" result/; fi
+              if [ -e "$d/vmlinux" ]; then cp -L "$d/vmlinux" result/; fi
+            done
           fi
       - name: Run image tests (QEMU smoke)
         run: |
