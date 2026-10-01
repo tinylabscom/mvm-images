@@ -37,16 +37,8 @@ jobs:
             STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths | head -n1)"
             echo "STORE=$STORE"
             mkdir -p result
-            # Copy known artifact names if present
-            for f in kernel.img vmlinux rootfs.bin; do
-              if [ -e "$STORE/$f" ]; then cp -L "$STORE/$f" result/; fi
-            done
-            # Search one level deep for matching files and copy them
-            for d in "$STORE"/*; do
-              if [ -e "$d/kernel.img" ]; then cp -L "$d/kernel.img" result/; fi
-              if [ -e "$d/rootfs.bin" ]; then cp -L "$d/rootfs.bin" result/; fi
-              if [ -e "$d/vmlinux" ]; then cp -L "$d/vmlinux" result/; fi
-            done
+            # Recursively find and copy common kernel/rootfs artifact names
+            find "$STORE" -maxdepth 6 -type f \( -name 'kernel.img' -o -name 'vmlinux' -o -name 'rootfs.bin' -o -name 'rootfs.ext4' \) -exec cp -L {} result/ \; || true
           fi
       - name: Run image tests (QEMU smoke)
         run: |
