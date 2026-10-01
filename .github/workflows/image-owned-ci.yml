@@ -32,6 +32,11 @@ jobs:
           set -euo pipefail
           # The repo exposes a qemu smoke harness; run the smoke for x86_64
           just bdd
+      - name: Upload build result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-result
+          path: result
 
   boot-witness-qemu:
     name: Boot witness (QEMU)
@@ -41,6 +46,22 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Download build result artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image-result
+          path: ./result
+      - name: Install Rust toolchain and just
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          cargo install --locked just
+      - name: Install QEMU
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils
       - name: Run QEMU boot witness
         run: |
           set -euo pipefail
