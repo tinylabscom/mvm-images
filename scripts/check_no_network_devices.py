@@ -114,8 +114,18 @@ def check_e2e_harness_contract() -> None:
     e2e_boot.assert_no_network_devices(qemu)
     if "-nodefaults" not in qemu:
         raise ContractError("QEMU boot plan does not suppress implicit devices")
-    if not any("vsock" in arg for arg in qemu):
-        raise ContractError("QEMU boot plan has no vsock device")
+
+    # If the host supports vhost-vsock, require the plan to include a vsock device.
+    # On hosted runners (GitHub Actions) /dev/vhost-vsock may be absent or
+    # inaccessible; in that case accept a plan without vhost-vsock so the smoke
+    # harness can run under TCG. This mirrors the runtime fallback in
+    # scripts/e2e_boot.py.
+    supports_vhost = getattr(e2e_boot, "host_supports_vhost_vsock", lambda: True)()
+    if supports_vhost:
+        if not any("vsock" in arg for arg in qemu):
+            raise ContractError("QEMU boot plan has no vsock device")
+    else:
+        print("warning: host does not support /dev/vhost-vsock; skipping vsock presence check")
 
     firecracker = e2e_boot.firecracker_config(
         kernel=Path("/artifacts/vmlinux"),
