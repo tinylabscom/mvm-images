@@ -27,6 +27,11 @@ jobs:
           set -euo pipefail
           # Build the runtime overlay and default-tenant derivations (x86_64)
           just build runtime-overlay default
+          # Also build the qemu-wasm smoke pack (produces kernel.img + rootfs.bin) on x86_64
+          arch=$(uname -m)
+          if [ "$arch" = "x86_64" ] || [ "$arch" = "amd64" ]; then
+            just build qemu-wasm qemu-wasm-smoke-pack
+          fi
       - name: Run image tests (QEMU smoke)
         run: |
           set -euo pipefail
