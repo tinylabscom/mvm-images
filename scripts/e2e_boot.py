@@ -191,6 +191,34 @@ def assert_no_network_devices(plan: Any) -> None:
         raise E2EError("forbidden network device in VMM plan: " + ", ".join(violations))
 
 
+def write_witness(
+    path: Path,
+    *,
+    backend: str,
+    ready_marker: str,
+    rootfs_name: str,
+    rootfs_type: str,
+    vmm_plan: Any,
+) -> None:
+    """Persist evidence only after the VMM has emitted its readiness marker."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "backend": backend,
+                "ready_marker": ready_marker,
+                "rootfs_name": rootfs_name,
+                "rootfs_type": rootfs_type,
+                "vmm_plan": vmm_plan,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _require_file(path: Path, label: str) -> Path:
     resolved = path.resolve()
     if not resolved.is_file():
@@ -291,6 +319,11 @@ def main() -> int:
         help="read-only runtime overlay attached as the second block device",
     )
     parser.add_argument("--ready-marker", default=READY_MARKER)
+    parser.add_argument(
+        "--witness",
+        type=Path,
+        help="write successful boot evidence as JSON after observing the ready marker",
+    )
     parser.add_argument("--plan", action="store_true", help="print the VMM plan without booting")
     args = parser.parse_args()
 
@@ -325,6 +358,7 @@ def main() -> int:
                     runtime_overlay=runtime_overlay,
                 )
                 run_until_ready(command, args.timeout, args.ready_marker)
+                executed_plan: Any = command
             else:
                 binary = _require_binary(args.binary or "firecracker")
                 config = firecracker_config(
@@ -342,6 +376,16 @@ def main() -> int:
                     args.timeout,
                     args.ready_marker,
                 )
+                executed_plan = config
+        if args.witness is not None:
+            write_witness(
+                args.witness,
+                backend=args.backend,
+                ready_marker=args.ready_marker,
+                rootfs_name=args.rootfs_name,
+                rootfs_type=args.rootfs_type,
+                vmm_plan=executed_plan,
+            )
     except (E2EError, OSError) as exc:
         print(f"e2e boot failed: {exc}", file=sys.stderr)
         return 1

@@ -52,6 +52,7 @@ stdenv.mkDerivation {
 
     # Smoke guest image.
     cp ${qemu-wasm-smoke-image}/kernel.img $out/${packName}/
+    cp ${qemu-wasm-smoke-image}/vmlinux $out/${packName}/
     cp ${qemu-wasm-smoke-image}/rootfs.bin $out/${packName}/
 
     # Bundled xterm-pty for the pseudo-terminal slave used by QEMU-Wasm.

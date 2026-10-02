@@ -96,6 +96,10 @@ def check_qemu_wasm_contract() -> None:
     for required in ("-nodefaults", "-no-user-config", "-serial"):
         if required not in pack:
             raise ContractError(f"QEMU-Wasm launch plan is missing {required}")
+    for artifact in ("kernel.img", "vmlinux", "rootfs.bin"):
+        copy = f"cp ${{qemu-wasm-smoke-image}}/{artifact} $out/${{packName}}/"
+        if copy not in pack:
+            raise ContractError(f"QEMU-Wasm smoke pack is missing {artifact}")
 
 
 def check_e2e_harness_contract() -> None:
