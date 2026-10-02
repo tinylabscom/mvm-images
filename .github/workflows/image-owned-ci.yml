@@ -96,12 +96,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+      - name: Check KVM capability
+        id: kvm
+        run: |
+          set -euo pipefail
+          if reason="$(python3 scripts/check_kvm_access.py 2>&1)"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "$reason"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Native Firecracker witness skipped because KVM is inaccessible to the current runner user: $reason"
+          fi
       - name: Download build result artifact
+        if: steps.kvm.outputs.available == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: image-result
           path: ./result
       - name: Install Firecracker
+        if: steps.kvm.outputs.available == 'true'
         run: |
           set -euo pipefail
           readonly FIRECRACKER_TAG=v1.12.0
@@ -123,16 +136,14 @@ jobs:
             "$tmpdir/$release_dir/firecracker-${FIRECRACKER_TAG}-${fc_arch}" \
             /usr/local/bin/firecracker
           firecracker --version
-      - name: Run Firecracker boot witness (if KVM present)
+      - name: Run Firecracker boot witness
+        if: steps.kvm.outputs.available == 'true'
         run: |
           set -euo pipefail
-          if [ ! -e /dev/kvm ]; then
-            echo "/dev/kvm not available on this runner; skipping Firecracker boot witness"
-            exit 0
-          fi
           firecracker_bin="$(command -v firecracker || printf '%s\n' /usr/local/bin/firecracker)"
           python3 scripts/e2e_boot.py firecracker ./result --binary "$firecracker_bin" --rootfs-type ext4 --witness /tmp/firecracker-boot-witness.json
       - name: Upload firecracker witness
+        if: steps.kvm.outputs.available == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: firecracker-boot-witness
