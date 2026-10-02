@@ -27,7 +27,7 @@ jobs:
           set -euo pipefail
           # Build the runtime overlay and default-tenant derivations (x86_64)
           just build runtime-overlay default
-          # Also build the qemu-wasm smoke pack (produces kernel.img + rootfs.bin) on x86_64
+          # Also build the qemu-wasm smoke pack (produces both kernel formats + rootfs) on x86_64
           arch=$(uname -m)
           if [ "$arch" = "x86_64" ] || [ "$arch" = "amd64" ]; then
             just build qemu-wasm qemu-wasm-smoke-pack
@@ -81,7 +81,7 @@ jobs:
       - name: Run QEMU boot witness (TCG)
         run: |
           set -euo pipefail
-          python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg
+          python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg --rootfs-type ext4 --witness /tmp/qemu-boot-witness.json
       - name: Upload witness
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -104,20 +104,25 @@ jobs:
       - name: Install Firecracker
         run: |
           set -euo pipefail
+          readonly FIRECRACKER_TAG=v1.12.0
           arch=$(uname -m)
           case "$arch" in
             x86_64|amd64) fc_arch=x86_64 ;;
             aarch64|arm64) fc_arch=aarch64 ;;
-            *) fc_arch=x86_64 ;;
+            *) echo "unsupported Firecracker architecture: $arch" >&2; exit 1 ;;
           esac
           tmpdir=$(mktemp -d)
-          curl -fSL "https://github.com/firecracker-microvm/firecracker/releases/latest/download/firecracker-${fc_arch}.tgz" -o "$tmpdir/firecracker.tgz" || true
-          if [ -f "$tmpdir/firecracker.tgz" ]; then
-            tar -xzf "$tmpdir/firecracker.tgz" -C "$tmpdir"
-            sudo install -m0755 "$tmpdir/firecracker" /usr/local/bin/firecracker || true
-          else
-            echo "warning: could not download Firecracker prebuilt; proceeding to check /usr/local/bin/firecracker"
-          fi
+          archive="firecracker-${FIRECRACKER_TAG}-${fc_arch}.tgz"
+          release_dir="release-${FIRECRACKER_TAG}-${fc_arch}"
+          base_url="https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_TAG}"
+          curl --proto '=https' --tlsv1.2 -fSL "$base_url/$archive" -o "$tmpdir/$archive"
+          curl --proto '=https' --tlsv1.2 -fSL "$base_url/$archive.sha256.txt" -o "$tmpdir/$archive.sha256.txt"
+          (cd "$tmpdir" && sha256sum --check "$archive.sha256.txt")
+          tar -xzf "$tmpdir/$archive" -C "$tmpdir"
+          sudo install -m0755 \
+            "$tmpdir/$release_dir/firecracker-${FIRECRACKER_TAG}-${fc_arch}" \
+            /usr/local/bin/firecracker
+          firecracker --version
       - name: Run Firecracker boot witness (if KVM present)
         run: |
           set -euo pipefail
@@ -126,7 +131,7 @@ jobs:
             exit 0
           fi
           firecracker_bin="$(command -v firecracker || printf '%s\n' /usr/local/bin/firecracker)"
-          python3 scripts/e2e_boot.py firecracker ./result --binary "$firecracker_bin"
+          python3 scripts/e2e_boot.py firecracker ./result --binary "$firecracker_bin" --rootfs-type ext4 --witness /tmp/firecracker-boot-witness.json
       - name: Upload firecracker witness
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -154,7 +159,7 @@ jobs:
       - name: Run QEMU boot witness on macOS (TCG)
         run: |
           set -euo pipefail
-          python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg
+          python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg --rootfs-type ext4 --witness /tmp/macos-boot-witness.json
       - name: Upload macOS witness
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

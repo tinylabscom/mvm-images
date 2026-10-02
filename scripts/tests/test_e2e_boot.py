@@ -1,5 +1,7 @@
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -11,6 +13,27 @@ SPEC.loader.exec_module(e2e_boot)
 
 
 class E2EBootPlanTests(unittest.TestCase):
+    def test_image_owned_smoke_boots_use_ext4_compatibility_and_emit_witnesses(self):
+        workflow = (ROOT / ".github/workflows/image-owned-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(3, workflow.count("--rootfs-type ext4 --witness"))
+        for witness in (
+            "/tmp/qemu-boot-witness.json",
+            "/tmp/firecracker-boot-witness.json",
+            "/tmp/macos-boot-witness.json",
+        ):
+            self.assertIn(f"--witness {witness}", workflow)
+
+    def test_firecracker_install_is_versioned_and_checksum_verified(self):
+        workflow = (ROOT / ".github/workflows/image-owned-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("readonly FIRECRACKER_TAG=v1.12.0", workflow)
+        self.assertIn("firecracker-${FIRECRACKER_TAG}-${fc_arch}.tgz", workflow)
+        self.assertIn("sha256sum --check", workflow)
+        self.assertNotIn("releases/latest/download/firecracker-", workflow)
+
     def test_qemu_plan_has_explicit_vsock_and_no_implicit_devices(self):
         command = e2e_boot.qemu_command(
             binary="qemu-system-x86_64",
@@ -107,6 +130,25 @@ class E2EBootPlanTests(unittest.TestCase):
     def test_guard_rejects_firecracker_network_interface(self):
         with self.assertRaises(e2e_boot.E2EError):
             e2e_boot.assert_no_network_devices({"network-interfaces": []})
+
+    def test_success_witness_records_ready_marker_and_actual_plan(self):
+        plan = ["qemu-system-x86_64", "-nodefaults", "-drive", "file=rootfs.bin"]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "evidence" / "qemu.json"
+            e2e_boot.write_witness(
+                path,
+                backend="qemu",
+                ready_marker=e2e_boot.READY_MARKER,
+                rootfs_name="rootfs.bin",
+                rootfs_type="ext4",
+                vmm_plan=plan,
+            )
+            witness = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual("qemu", witness["backend"])
+        self.assertEqual("ext4", witness["rootfs_type"])
+        self.assertEqual(e2e_boot.READY_MARKER, witness["ready_marker"])
+        self.assertEqual(plan, witness["vmm_plan"])
 
 
 if __name__ == "__main__":
