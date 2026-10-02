@@ -7,7 +7,8 @@ diverged from mvm can be told apart from one that was changed on purpose.
 
 ## The pin
 
-The pin is mvm `2487feefa5b404b2968cab7de0ab796548f08583` (release v0.18.3),
+The pin is mvm `4e65b221744885e536ec91a3f2948cdc508dcb49` (post-v0.22.0
+main),
 advanced past mvm's W8 deletion of its in-tree image tree
 (tinylabscom/mvm 62e1116866): from this pin on, mvm builds no image, and the
 recipes here — `images/`, `kernel/`, `qemu-wasm/` and the build scripts — are
@@ -22,7 +23,9 @@ harness scripts — keep their drift rows. The artifact `VERSION` still comes
 from the pinned mvm `Cargo.toml`, so a set is built for exactly the CLI
 version of the mvm commit it pins.
 
-For the history: all copies were taken at mvm commit
+In between, the pin stood at `0f33c057d85384460c77c3bf0c0187b3f021677d`
+(`mvm` #3746, builder boot contract) before this advance. For the
+history: all copies were taken at mvm commit
 `5460c6e11298082e754ce9433df9af9f61de71d5`, advanced from
 `1f2db79b319c8e74be5e09eeb337fac6d2ddf788` (itself advanced from
 `e97eea9ace29d831ee0c755fef758d7e289ca831`). The later pins carry the
