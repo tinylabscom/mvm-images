@@ -20,7 +20,7 @@ jobs:
           set -euo pipefail
           # Install Rust toolchain and compile `just` so we have a known-good binary
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           cargo install --locked just
       - name: Build image derivations (fast subset)
         run: |
@@ -32,7 +32,7 @@ jobs:
           if [ "$arch" = "x86_64" ] || [ "$arch" = "amd64" ]; then
             just build qemu-wasm qemu-wasm-smoke-pack
             # Locate the nix store result(s) and copy expected artifacts into ./result
-            system=$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64')-linux
+            system=$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')-linux
             echo "system=$system"
             STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths | head -n1)"
             echo "STORE=$STORE"
@@ -40,7 +40,7 @@ jobs:
             if [ -L result ] || [ -e result ]; then sudo rm -rf result; fi
             mkdir -p result
             # Make sure result is writable by the runner
-            sudo chown -R $(id -u):$(id -g) result || true
+            sudo chown -R "$(id -u):$(id -g)" result || true
             chmod -R u+rwX result || true
             # Recursively find and copy common kernel/rootfs artifact names into a clean result/
             find "$STORE" -maxdepth 6 -type f \( -name 'kernel.img' -o -name 'vmlinux' -o -name 'rootfs.bin' -o -name 'rootfs.ext4' \) -exec sudo cp -L {} result/ \; || true
@@ -125,7 +125,8 @@ jobs:
             echo "/dev/kvm not available on this runner; skipping Firecracker boot witness"
             exit 0
           fi
-          python3 scripts/e2e_boot.py firecracker ./result --binary $(which firecracker 2>/dev/null || echo /usr/local/bin/firecracker)
+          firecracker_bin="$(command -v firecracker || printf '%s\n' /usr/local/bin/firecracker)"
+          python3 scripts/e2e_boot.py firecracker ./result --binary "$firecracker_bin"
       - name: Upload firecracker witness
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
