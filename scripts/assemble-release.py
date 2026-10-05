@@ -81,6 +81,8 @@ SDK_CDYLIB_INPUTS = (
     "crates/mvm-agentd/src",
     "crates/mvm-host-services/Cargo.toml",
     "crates/mvm-host-services/src",
+    "crates/mvm-setpriv/Cargo.toml",
+    "crates/mvm-setpriv/src",
 )
 SDK_CDYLIB_DOMAIN = b"mvm-host-services-cdylib-input-v1\0"
 

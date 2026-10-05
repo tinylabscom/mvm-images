@@ -27,8 +27,8 @@ SPEC.loader.exec_module(ASSEMBLER)
 
 # Known answer from the Rust function over the synthetic tree built below
 # (mvm_build::guest_agent_build::sdk_cdylib_source_fingerprint, run
-# 2026-09-29 against mvm 37ea5166be).
-FIXTURE_FINGERPRINT = "23b5e6c98d4dda780be0394e6ea5538bbc9357e325a5a0b42bf8e80d3b96fe92"
+# 2026-10-04 against mvm 4007a31595, whose input list includes mvm-setpriv).
+FIXTURE_FINGERPRINT = "6c863f266a6ad21830bb9b35a92b10a38be37be599448053ebf935594634c95c"
 
 FIXTURE_FILES = {
     "Cargo.toml": '[workspace]\n',
@@ -42,6 +42,8 @@ FIXTURE_FILES = {
     "crates/mvm-agentd/src/lib.rs": "pub const C: u8 = 3;\n",
     "crates/mvm-host-services/Cargo.toml": '[package]\nname = "mvm-host-services"\n',
     "crates/mvm-host-services/src/lib.rs": "pub const D: u8 = 4;\n",
+    "crates/mvm-setpriv/Cargo.toml": '[package]\nname = "mvm-setpriv"\n',
+    "crates/mvm-setpriv/src/main.rs": "fn main() {}\n",
 }
 
 
@@ -69,6 +71,21 @@ class SdkCdylibFingerprintTests(unittest.TestCase):
             with self.assertRaises(ASSEMBLER.Refusal) as caught:
                 ASSEMBLER.sdk_cdylib_fingerprint(root)
             self.assertIn("crates/mvm-agentd/src", str(caught.exception))
+
+    def test_a_missing_setpriv_input_refuses_by_path(self):
+        """mvm added mvm-setpriv to the hashed inputs; a tree without it must
+        refuse rather than fingerprint the subset it can read."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel, body in FIXTURE_FILES.items():
+                if rel.startswith("crates/mvm-setpriv/"):
+                    continue
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(body)
+            with self.assertRaises(ASSEMBLER.Refusal) as caught:
+                ASSEMBLER.sdk_cdylib_fingerprint(root)
+            self.assertIn("crates/mvm-setpriv", str(caught.exception))
 
     def test_every_byte_feeds_the_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
