@@ -16,6 +16,36 @@ sys.modules[SPEC.name] = ASSEMBLER
 SPEC.loader.exec_module(ASSEMBLER)
 
 
+class FingerprintFixtureTests(unittest.TestCase):
+    """The fixture tree must cover the real input list.
+
+    When mvm adds an input, the assembler refuses every candidate built from a
+    tree without it. That refusal is correct but reads as an unrelated failure,
+    so this names the gap directly.
+    """
+
+    def test_the_fixture_covers_every_fingerprint_input(self):
+        crates = {
+            part.split("/")[1]
+            for part in ASSEMBLER.SDK_CDYLIB_INPUTS
+            if part.startswith("crates/")
+        }
+        self.assertEqual(
+            crates,
+            {
+                "mvm-contract",
+                "mvm-core",
+                "mvm-agentd",
+                "mvm-host-services",
+                "mvm-setpriv",
+            },
+            "SDK_CDYLIB_INPUTS changed: add the crate to the fixture loop in "
+            "AssembleReleaseTests.setUp and to FIXTURE_FILES in "
+            "test_sdk_fingerprint.py, then recompute the known answer with the "
+            "Rust function",
+        )
+
+
 class BuilderBootAbiTests(unittest.TestCase):
     """The ABI is read from one checked-in file, so the image, the release
     assembly and the local emitter cannot disagree about how PID 1 arrives."""
@@ -67,10 +97,21 @@ class AssembleReleaseTests(unittest.TestCase):
             "pub const BUILDER_VM_CACHE_CONTRACT_VERSION: u32 = 4;\n"
         )
         # The SDK sidecar fingerprint walks the same source list the consumer
-        # hashes; the fake source needs every declared input.
+        # hashes, and the assembler refuses a tree missing any of it, so the
+        # fake source needs every declared input. The crate list below is
+        # asserted against SDK_CDYLIB_INPUTS by
+        # test_the_fixture_covers_every_fingerprint_input, so adding an input
+        # to the real list fails there rather than here with a refusal that
+        # looks like an unrelated bug.
         (self.mvm / "Cargo.toml").write_text("[workspace]\n")
         (self.mvm / "Cargo.lock").write_text("lock\n")
-        for crate in ("mvm-contract", "mvm-core", "mvm-agentd", "mvm-host-services"):
+        for crate in (
+            "mvm-contract",
+            "mvm-core",
+            "mvm-agentd",
+            "mvm-host-services",
+            "mvm-setpriv",
+        ):
             src = self.mvm / "crates" / crate / "src"
             src.mkdir(parents=True, exist_ok=True)
             (self.mvm / "crates" / crate / "Cargo.toml").write_text(
