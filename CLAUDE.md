@@ -24,9 +24,10 @@ The essential architecture is:
   ([tinylabscom/mvm-images#50](https://github.com/tinylabscom/mvm-images/issues/50)).
 - This repository is never part of `mvm`'s merge queue. An image set changes
   when a kernel, package or toolchain moves, not when an `mvm` change merges.
-  `mvm`'s merge-group lane still builds the runtime overlay from a checkout
-  here until [tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108);
-  add no other such edge.
+  Until [tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108),
+  `mvm`'s dispatch-only guest-image-boot lane builds the runtime overlay from a
+  checkout here and its merge-queue `boot-latency` lane boots the published
+  set's overlay; add no other such edge.
 - `mvm` consumes signed, digest-pinned generated image sets; it does not keep a
   second image source or canonical build path.
 - Reproducibility rebuilds the canonical image definitions here; never compare

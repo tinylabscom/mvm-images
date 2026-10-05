@@ -46,10 +46,11 @@ Do not compare canonical output bytes with retired in-tree image recipes in
 This repository is never part of `mvm`'s merge queue. An image set changes
 when a kernel, a package or a toolchain moves, not because an `mvm` change
 merged, and no `mvm` merge may need to build, publish or wait for anything
-here. Today `mvm`'s merge-group guest-image-boot lane still builds the runtime
-overlay from a checkout of this repository; that ends under
-[tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108). Do not
-add another such edge.
+here. Two edges remain today, both removed under
+[tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108): `mvm`'s
+dispatch-only guest-image-boot lane builds the runtime overlay from a checkout
+of this repository, and its merge-queue `boot-latency` lane boots the published
+set's runtime overlay. Do not add another such edge.
 
 Workload-specific packages, services, configuration and tests belong in their
 application or template repository. Do not create workload-named images or

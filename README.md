@@ -32,8 +32,9 @@ and an `mvm`-authored `/init`.
 [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49)
 removes the input and those roles, after which the base root filesystems carry
 no `mvm` binary and no `mvm`-authored `/init`. In the other direction, `mvm`'s
-merge-group guest-image-boot lane still builds the runtime overlay from a
-checkout of this repository; that ends under
+dispatch-only guest-image-boot lane builds the runtime overlay from a checkout
+of this repository and its merge-queue `boot-latency` lane boots the published
+set's overlay; both end under
 [tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108). The
 sections below describe the current tree and mark the parts #49 retires as
 transitional.
