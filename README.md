@@ -233,21 +233,67 @@ SDK sidecar members with the source fingerprint of the cdylib they were
 built from. It signs the root `image-set.json` with Sigstore keyless OIDC
 and verifies the lock, signing identity, completeness and every artifact
 digest with an `mvmctl` built from the exact `mvm` commit pinned by this
-repository. Only after those checks pass does the
+repository, then attests build provenance for the verified set (see
+[Build provenance](#build-provenance)). Only after those checks pass does the
 protected `image-release` environment create the immutable
 [GitHub Release](https://github.com/tinylabscom/mvm-images/releases). A missing
 role or architecture therefore produces no release.
 
 The source fingerprint stamp and the verifier built from the pinned `mvm`
 commit are both reads of `mvm`'s source, and both go under #49; the verifier
-becomes a released `mvmctl`. Sets carry no build-provenance attestation yet:
-[tinylabscom/mvm-images#50](https://github.com/tinylabscom/mvm-images/issues/50)
-adds one, in SLSA's provenance format, for every member and the
-`image-set.json` root, under the release workflow identity.
+becomes a released `mvmctl`.
 
 Release tags and assets are never moved, replaced or deleted. To recover from
 a bad release, publish revocation metadata, fix the source through another PR
 and merge-queue run, and cut a higher version.
+
+### Build provenance
+
+Each release attests SLSA build provenance (predicate type
+`https://slsa.dev/provenance/v1`) under the release workflow's identity, the
+same identity that signs `image-set.json` and the pack manifests. The subjects
+are every member artifact, every member's pack manifest and SBOM, and
+`image-set.json` itself. `scripts/assemble-release.py` writes that list from
+the member table it assembles the set from, so a new member is attested
+without a change to the workflow, and the workflow checks the list against the
+bytes it is about to publish before it attests them. The other published
+files are not subjects: the build jobs' per-role checksum lists, SBOM text,
+command lines and metadata JSON, the `vmlinux-<arch>-builder` copy of the
+Stage 0 kernel, the cosign bundles and `images.lock`. Sets up to and including
+`image-set/v0.2.4` were published before the attestation existed and carry
+none.
+
+Verify a downloaded subject with the GitHub CLI, naming the workflow and the
+tag it must come from:
+
+```sh
+tag=image-set/vX.Y.Z   # for example the release_tag in mvm's images.lock
+gh release download "$tag" -R tinylabscom/mvm-images -p image-set.json
+gh attestation verify image-set.json \
+  -R tinylabscom/mvm-images \
+  --signer-workflow tinylabscom/mvm-images/.github/workflows/release.yml \
+  --source-ref "refs/tags/$tag" \
+  --deny-self-hosted-runners
+```
+
+The same command verifies any other subject, a kernel or root filesystem
+included. `--cert-identity
+"https://github.com/tinylabscom/mvm-images/.github/workflows/release.yml@refs/tags/$tag"`
+checks the workflow and tag in one flag; it is the identity `images.lock`
+records under `[signing_identity]`. `--source-digest` with the
+`producer.source_commit` from `image-set.json` also pins the commit.
+
+A passing verification proves that a GitHub-hosted run of `release.yml` in
+this repository, started by that tag at that commit, produced a file with
+exactly these bytes. It does not prove the bytes are what that commit's source
+builds. This is SLSA Build Level 2: the job that builds and publishes the set
+also signs the attestation, so a compromised release job can produce altered
+bytes and a valid attestation for them. Reproducibility is what speaks to an
+uncorrupted build. `.github/workflows/reproduce.yml` rebuilds the builder,
+default-tenant, rootless-tenant and runtime-overlay roles on both
+architectures and fails if a rebuild differs; it runs on pull requests that
+change their inputs, not inside the release, so it vouches for the
+definitions a set is built from rather than for the published bytes.
 
 ### Cadence and retention
 
@@ -263,8 +309,8 @@ exact set they were built against.
 - No secrets and no customer data, ever, in this repository or its artifacts.
   The only credentials any workflow holds are the short-lived OIDC tokens
   Sigstore keyless signing mints.
-- Signing happens only in a protected release environment, from a protected tag
-  namespace. An untrusted branch cannot mint the allow-listed release identity.
+- Signing and provenance attestation happen only in a protected release
+  environment, from a protected tag namespace. An untrusted branch cannot mint the allow-listed release identity.
 - Third-party actions are pinned by immutable commit SHA.
   `scripts/check-action-pins.sh` refuses anything else on every pull request.
 - Report a suspected compromise of a published artifact or signing identity as
@@ -287,7 +333,7 @@ kernel/                 builder, workload and rootless kernel configs; standalon
 qemu-wasm/              QEMU/WebAssembly engine, smoke image and browser pack
 packaging/              static checks run on staged artifacts
 scripts/                kernel, host-binary, QEMU-wasm and drift tooling
-  assemble-release.py   complete-set assembly; refuses a partial release
+  assemble-release.py   complete-set assembly and provenance subjects; refuses a partial release
 sources/                what was copied from mvm, and the documented rewrites (transitional)
 SOURCES.md              provenance of every copied file (transitional)
 ```
