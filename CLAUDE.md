@@ -19,8 +19,9 @@ The essential architecture is:
   Add no new dependency on `mvm`'s source; shrink the existing ones.
 - Base root filesystems must not carry mvm binaries or an mvm-authored
   `/init`. The existing images still do until #49 lands; do not add more.
-- Image sets are to gain a build-provenance attestation in SLSA's format; they
-  carry none today
+- The release attests SLSA build provenance for every member and the
+  `image-set.json` root, from the subjects `scripts/assemble-release.py`
+  derives; sets up to `image-set/v0.2.4` carry none
   ([tinylabscom/mvm-images#50](https://github.com/tinylabscom/mvm-images/issues/50)).
 - This repository is never part of `mvm`'s merge queue. An image set changes
   when a kernel, package or toolchain moves, not when an `mvm` change merges.

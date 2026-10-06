@@ -118,12 +118,14 @@ otherwise incompatible CNI or container network work by adding guest devices.
   lands. Do not add an mvm binary to any base image in the meantime.
 - Do not add a role whose bytes come from `mvm`'s source. A new role is part
   of the Linux layer or it does not belong here.
-- Published sets are to carry a build-provenance attestation, in SLSA's
-  provenance format, for each member and for the `image-set.json` root, under
-  the release workflow identity
+- Published sets carry a build-provenance attestation, in SLSA's provenance
+  format, for each member artifact, pack manifest and SBOM and for the
+  `image-set.json` root, under the release workflow identity
   ([tinylabscom/mvm-images#50](https://github.com/tinylabscom/mvm-images/issues/50)).
-  None does today: reproduction and the cosign signature are the evidence, so
-  do not describe a set as attested until that lands.
+  The subjects come from `scripts/assemble-release.py`'s member table; never
+  list them a second time in a workflow. Sets up to `image-set/v0.2.4` predate
+  it and carry none. The attestation is SLSA Build Level 2 and does not stand
+  in for reproduction.
 
 ## Working tree
 
