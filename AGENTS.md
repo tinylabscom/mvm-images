@@ -2,18 +2,55 @@
 
 ## Ownership
 
-This repository is the canonical source, builder and publisher for every base
-image `mvm` consumes: kernels, workload root filesystems, builder images,
-runtime overlays, initramfs images and bootstrap inputs. `mvm` is a consumer of
-the generated, signed, digest-pinned image set. Do not add or preserve a second
-canonical image definition or publication path in `mvm`.
+This repository builds the Linux layer `mvm` boots, and nothing else:
 
-Program source for the guest agent, runtime helpers and other `mvm` binaries
-may remain in `mvm`; image composition and image-specific build/release policy
-belong here. Transitional source mirrors must be removed when their extraction
-workstream completes rather than becoming a permanent reverse dependency. Do
-not compare canonical output bytes with retired in-tree image recipes in
+- the kernels: builder, `default-tenant` workload and `rootless-tenant`
+  workload;
+- the base `default-tenant` and `rootless-tenant` root filesystems;
+- the builder VM image;
+- the Stage 0 seeds a cold host bootstraps from.
+
+They are built by Nix, reproduced, cosign-signed and published together as
+one image set. `mvm` consumes that set through its digest-pinned image lock.
+Do not add or preserve a second canonical definition or publication path for
+any of them in `mvm`.
+
+The guest runtime belongs to `mvm`: the runtime overlay, the initramfs, the
+SDK sidecar, the guest agent and its helpers, `mvm-setpriv` and the GPU shims.
+`mvm` ships it with each `mvmctl` release, version-locked to the CLI, and
+`mvmctl` assembles the overlay, initramfs and sidecar from it at boot. A guest
+change is then a change to `mvm` alone and never an image event here. The
+decision and the measurements behind it are in
+[tinylabscom/mvm#4100](https://github.com/tinylabscom/mvm/issues/4100).
+
+The tree has not caught up yet. Today it still takes `mvm` as a pinned flake
+input, compiles mvm's guest binaries from it, builds the `runtime-overlay` and
+`initramfs` roles and both SDK sidecars, bakes `mvm-setpriv` into the builder
+image, and composes both tenant root filesystems with mvm's `mkGuest`, so they
+carry mvm binaries and an mvm-authored `/init`. Removing every one of those
+dependencies is
+[tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49).
+Until it lands:
+
+- Add no new dependency on `mvm`'s source: no new read of the `mvm` input, no
+  new role or output built from it, no new file mirrored from it. A change to
+  an existing dependency should shrink it, never widen it.
+- Keep publishing the guest-runtime roles. Every `mvmctl` released so far
+  refuses a set without them, so the first set that drops them waits for an
+  `mvm` release that no longer requires them
+  ([tinylabscom/mvm#4105](https://github.com/tinylabscom/mvm/issues/4105)).
+
+Do not compare canonical output bytes with retired in-tree image recipes in
 `mvm`; reproducibility rebuilds the definitions in this repository.
+
+This repository is never part of `mvm`'s merge queue. An image set changes
+when a kernel, a package or a toolchain moves, not because an `mvm` change
+merged, and no `mvm` merge may need to build, publish or wait for anything
+here. Two edges remain today, both removed under
+[tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108): `mvm`'s
+dispatch-only guest-image-boot lane builds the runtime overlay from a checkout
+of this repository, and its merge-queue `boot-latency` lane boots the published
+set's runtime overlay. Do not add another such edge.
 
 Workload-specific packages, services, configuration and tests belong in their
 application or template repository. Do not create workload-named images or
@@ -74,6 +111,19 @@ otherwise incompatible CNI or container network work by adding guest devices.
   identity, revocation behavior and cross-backend boot evidence.
 - Any new role or capability must update the manifest producer, build and
   reproduction workflows, both-architecture tests, and `README.md`.
+- Base root filesystems carry no mvm binaries and no mvm-authored `/init`.
+  This is the target: the existing `default-tenant` and `rootless-tenant`
+  images still do, because `mkGuest` composes them, until
+  [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49)
+  lands. Do not add an mvm binary to any base image in the meantime.
+- Do not add a role whose bytes come from `mvm`'s source. A new role is part
+  of the Linux layer or it does not belong here.
+- Published sets are to carry a build-provenance attestation, in SLSA's
+  provenance format, for each member and for the `image-set.json` root, under
+  the release workflow identity
+  ([tinylabscom/mvm-images#50](https://github.com/tinylabscom/mvm-images/issues/50)).
+  None does today: reproduction and the cosign signature are the evidence, so
+  do not describe a set as attested until that lands.
 
 ## Working tree
 
@@ -91,3 +141,7 @@ the ordinary pull-request gate and run real boot probes on capable runners.
 The rootless smoke variant must directly witness uid 1000, namespace creation,
 delegated cgroup v2, its generic OCI tools, and loopback-only networking. It
 must not use `mvm` as a test harness.
+Today the rootless witness attaches the runtime overlay as a second block
+device; under #49 boot witnesses switch to a small test init and stop
+depending on any `mvm`-built bytes. Do not add a new witness that needs the
+overlay.

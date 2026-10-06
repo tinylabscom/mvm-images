@@ -1,5 +1,13 @@
 # Sources taken from mvm
 
+> **Transitional.** This repository is to build only the Linux layer and take
+> nothing from `mvm`'s source
+> ([tinylabscom/mvm#4100](https://github.com/tinylabscom/mvm/issues/4100)).
+> [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49)
+> removes the `mvm` source pin, this ledger, `sources/` and the drift check.
+> Until it lands, the pin and the ledger below are maintained as described, but
+> add no new mirror or rewrite.
+
 The image recipes here were copied from
 [tinylabscom/mvm](https://github.com/tinylabscom/mvm). This file records where
 each came from and every intended difference, so a copy that has quietly
