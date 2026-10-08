@@ -118,6 +118,7 @@ class AssembleReleaseTests(unittest.TestCase):
                 f'[package]\nname = "{crate}"\n'
             )
             (src / "lib.rs").write_text("pub const X: u8 = 0;\n")
+        self.subjects = self.root / "provenance-subjects.sha256"
         self.lock = self.root / "flake.lock"
         self.lock.write_text(
             json.dumps(
@@ -128,7 +129,7 @@ class AssembleReleaseTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_assembler(self):
+    def run_assembler(self, subjects=None):
         return subprocess.run(
             [
                 sys.executable,
@@ -145,6 +146,8 @@ class AssembleReleaseTests(unittest.TestCase):
                 str(self.mvm),
                 "--flake-lock",
                 str(self.lock),
+                "--subjects",
+                str(subjects or self.subjects),
             ],
             text=True,
             capture_output=True,
@@ -208,6 +211,54 @@ class AssembleReleaseTests(unittest.TestCase):
         result = self.run_assembler()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(missing.name, result.stderr)
+        self.assertFalse((self.assets / "image-set.json").exists())
+        self.assertFalse(self.subjects.exists())
+
+    def read_subjects(self):
+        subjects = {}
+        for line in self.subjects.read_text().splitlines():
+            digest, name = line.split("  ", 1)
+            self.assertNotIn(name, subjects, f"{name} is listed twice")
+            subjects[name] = digest
+        return subjects
+
+    def test_provenance_subjects_are_every_member_and_the_root(self):
+        """The attested set comes from member_specs, not from a second list.
+
+        A member added to member_specs must be attested without touching the
+        workflow, so this compares against the specs and the emitted manifest
+        rather than against a fixed list.
+        """
+        result = self.run_assembler()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = {"image-set.json"}
+        for member in ASSEMBLER.member_specs("f" * 64):
+            expected.update(artifact.name for artifact in member.artifacts)
+            expected.add(f"pack-{member.slug}.json")
+            expected.add(f"sbom-{member.slug}.spdx.json")
+        subjects = self.read_subjects()
+        self.assertEqual(set(subjects), expected)
+        manifest = json.loads((self.assets / "image-set.json").read_text())
+        for member in manifest["members"]:
+            for artifact in member["artifacts"]:
+                self.assertEqual(subjects[artifact["name"]], artifact["sha256"])
+            self.assertEqual(
+                subjects[member["sbom"]["uri"].rsplit("/", 1)[1]], member["sbom"]["sha256"]
+            )
+        for name, digest in subjects.items():
+            self.assertEqual(
+                digest,
+                ASSEMBLER.sha256_file(self.assets / name),
+                f"{name}: the subject digest must be the digest of the published bytes",
+            )
+        self.assertNotIn("images.lock", subjects)
+
+    def test_provenance_subjects_inside_the_artifact_directory_are_refused(self):
+        inside = self.assets / "provenance-subjects.sha256"
+        result = self.run_assembler(subjects=inside)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("outside", result.stderr)
+        self.assertFalse(inside.exists())
         self.assertFalse((self.assets / "image-set.json").exists())
 
 

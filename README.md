@@ -1,22 +1,43 @@
 # mvm-images
 
-The system-image train for [mvm](https://github.com/tinylabscom/mvm): every
-base image an mvm host boots is built, verified, signed and published here,
-then consumed by `mvm` through one digest-pinned lock file.
+The Linux layer for [mvm](https://github.com/tinylabscom/mvm): the kernels,
+base root filesystems, builder VM image and Stage 0 seeds an mvm host boots
+are built, reproduced, signed and published here, then consumed by `mvm`
+through one digest-pinned lock file.
 
 ## How this repo relates to `mvm`
 
 For images, the dependency runs one way: **`mvm` depends on this repository**.
-Every byte a guest boots is built, signed, and published here as an immutable
-`image-set/v*` release, and `mvm` consumes those sets through its checked-in
-`images.lock` — it never builds an image. The one reverse edge is **source**,
-not images: the guest binaries' source (agent, egress client, the shared
-`mvm-core`/`mvm-contract` protocol crates) lives in `mvm`, because they
-compile against that workspace's `Cargo.lock` and are exercised by its tests.
-This repository takes that source as the `mvm` flake input — pinned to one
-exact commit in `flake.lock`, advanced with `nix flake lock --update-input
-mvm` — and builds the binaries as one input among the image's. Image
-construction never happens in the `mvm` tree.
+Every image is built, signed and published here as an immutable `image-set/v*`
+release, and `mvm` consumes those sets through its checked-in `images.lock`.
+
+The boundary is the Linux layer. This repository owns the kernels, the base
+`default-tenant` and `rootless-tenant` root filesystems, the builder VM image
+and the Stage 0 seeds. `mvm` owns the guest runtime — the runtime overlay, the
+initramfs, the SDK sidecar, the guest agent and its helpers, `mvm-setpriv` and
+the GPU shims. It ships with each `mvmctl` release, version-locked to the CLI,
+and `mvmctl` assembles it at boot. A guest change is then a change to `mvm`
+alone; an image set changes when a kernel, a package or a toolchain moves.
+This repository is never part of `mvm`'s merge queue. The decision and the
+measurements behind it are in
+[tinylabscom/mvm#4100](https://github.com/tinylabscom/mvm/issues/4100).
+
+**That is the direction; the tree is not there yet.** Today one reverse edge
+remains. This repository takes `mvm`'s source as the `mvm` flake input, pinned
+to one exact commit in `flake.lock`, and builds from it: the guest binaries
+(compiled against `mvm`'s `Cargo.lock`), the `runtime-overlay` and `initramfs`
+roles, both SDK sidecars, the `mvm-setpriv` the builder image bakes, and both
+tenant root filesystems, which `mvm`'s `mkGuest` composes with `mvm` binaries
+and an `mvm`-authored `/init`.
+[tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49)
+removes the input and those roles, after which the base root filesystems carry
+no `mvm` binary and no `mvm`-authored `/init`. In the other direction, `mvm`'s
+dispatch-only guest-image-boot lane builds the runtime overlay from a checkout
+of this repository and its merge-queue `boot-latency` lane boots the published
+set's overlay; both end under
+[tinylabscom/mvm#4108](https://github.com/tinylabscom/mvm/issues/4108). The
+sections below describe the current tree and mark the parts #49 retires as
+transitional.
 
 ## Start here
 
@@ -58,22 +79,27 @@ gh pr create --fill
 gh pr merge --auto --squash
 ```
 
-## Architecture: images are produced here
+## Architecture: the Linux layer is produced here
 
-`mvm-images` is the canonical producer of every base image `mvm` needs:
-kernels, root filesystems, runtime overlays, initramfs images, builder images
-and bootstrap inputs. `mvm` consumes released image sets through its
-digest-pinned image lock; it does not own a second canonical image definition
-or publication path. During the extraction there are temporary source mirrors,
-but image reproducibility is checked entirely against the canonical
-definitions here. The dependency is one way:
+`mvm-images` is the canonical producer of the Linux layer `mvm` boots:
+kernels, base root filesystems, the builder image and the Stage 0 seeds.
+`mvm` consumes released image sets through its digest-pinned image lock; it
+does not own a second canonical definition or publication path for them.
+Image reproducibility is checked entirely against the canonical definitions
+here. The dependency is one way:
 
 ```text
-mvm source revision ──► mvm-images builds and publishes an image set
-                                      │
-                                      ▼
-                          mvm verifies and consumes it
+a kernel, package or toolchain moves ──► mvm-images builds, reproduces,
+                                          signs and publishes an image set
+                                                       │
+                                                       ▼
+                       mvm verifies the set and boots it with the guest
+                       runtime its own mvmctl release ships
 ```
+
+Transitionally, a set is also built from one pinned `mvm` source revision and
+still carries the guest runtime; see
+[Where the mvm code comes from](#where-the-mvm-code-comes-from).
 
 Application and template repositories describe workloads. They do not move
 workload-specific image variants into this repository. When several workloads
@@ -132,10 +158,20 @@ same loopback-plus-FlowMux path as `default-tenant` for all external traffic.
 | Workload kernel | the kernel a workload microVM boots |
 | Workload rootfs | the verity-sealed default rootfs, its hash tree and root hash |
 | Rootless tenant | generic rootless-container-capable kernel and sealed rootfs |
-| Runtime overlay | the guest runtime binaries overlaid at launch |
-| SDK sidecars | the in-guest host-services library, one per C library |
 | Stage 0 seeds | the bootstrap kernel and Nix seed a cold host starts from |
 | QEMU/WebAssembly smoke pack | the browser-tier smoke artifacts |
+| Runtime overlay *(transitional)* | the guest runtime binaries overlaid at launch |
+| Initramfs *(transitional)* | the universal initramfs whose `/init` is the static guest agent |
+| SDK sidecars *(transitional)* | the in-guest host-services library, one per C library |
+
+The three transitional roles are `mvm`'s guest runtime, built here from the
+pinned `mvm` source. They move to `mvm` under #49, but they stay in every
+published set until an `mvm` release no longer requires them: every `mvmctl`
+released so far refuses a set without them
+([tinylabscom/mvm#4105](https://github.com/tinylabscom/mvm/issues/4105)). The
+builder VM image likewise still bakes `mvm-setpriv` until builder boot ABI 2 carries it in the
+boot payload, and both tenant root filesystems still carry `mvm` binaries and
+an `mvm`-authored `/init`.
 
 Guest architectures: `x86_64` and `aarch64`. Artifacts describe the *guest* —
 architecture, boot protocol, format, required devices — never the host
@@ -144,10 +180,14 @@ satisfy, so Firecracker on Linux and HVF on macOS consume the same bytes.
 
 ## What it does not own
 
-Host CLI and runtime source, the guest agent, artifact acquisition and
+Host CLI and runtime source, the guest runtime (the guest agent and its
+helpers, `mvm-setpriv`, the SDK library and GPU shims, and the overlay,
+initramfs and sidecar `mvmctl` assembles from them), artifact acquisition and
 verification code, admission, and the code that boots a builder — Stage 0
 orchestration, the builder runner and the VMM drivers — all stay in `mvm`.
 Stage 0's *seed inputs* move here; the code that runs Stage 0 does not.
+`mkGuest`, the library workload authors build images with, also stays in
+`mvm`.
 Workload-specific packages, services and configuration stay with their
 application or template repository. In particular, this repository may provide
 a generic rootless base but must not grow a Kubernetes-named image or kernel.
@@ -192,20 +232,76 @@ emits a signed pack manifest and SPDX SBOM for each member, and stamps the
 SDK sidecar members with the source fingerprint of the cdylib they were
 built from. It signs the root `image-set.json` with Sigstore keyless OIDC
 and verifies the lock, signing identity, completeness and every artifact
-digest with the exact `mvm` commit pinned by this repository. Only after those checks pass does the
+digest with an `mvmctl` built from the exact `mvm` commit pinned by this
+repository, then attests build provenance for the verified set (see
+[Build provenance](#build-provenance)). Only after those checks pass does the
 protected `image-release` environment create the immutable
 [GitHub Release](https://github.com/tinylabscom/mvm-images/releases). A missing
 role or architecture therefore produces no release.
+
+The source fingerprint stamp and the verifier built from the pinned `mvm`
+commit are both reads of `mvm`'s source, and both go under #49; the verifier
+becomes a released `mvmctl`.
 
 Release tags and assets are never moved, replaced or deleted. To recover from
 a bad release, publish revocation metadata, fix the source through another PR
 and merge-queue run, and cut a higher version.
 
+### Build provenance
+
+Each release attests SLSA build provenance (predicate type
+`https://slsa.dev/provenance/v1`) under the release workflow's identity, the
+same identity that signs `image-set.json` and the pack manifests. The subjects
+are every member artifact, every member's pack manifest and SBOM, and
+`image-set.json` itself. `scripts/assemble-release.py` writes that list from
+the member table it assembles the set from, so a new member is attested
+without a change to the workflow, and the workflow checks the list against the
+bytes it is about to publish before it attests them. The other published
+files are not subjects: the build jobs' per-role checksum lists, SBOM text,
+command lines and metadata JSON, the `vmlinux-<arch>-builder` copy of the
+Stage 0 kernel, the cosign bundles and `images.lock`. Sets up to and including
+`image-set/v0.2.4` were published before the attestation existed and carry
+none.
+
+Verify a downloaded subject with the GitHub CLI, naming the workflow and the
+tag it must come from:
+
+```sh
+tag=image-set/vX.Y.Z   # for example the release_tag in mvm's images.lock
+gh release download "$tag" -R tinylabscom/mvm-images -p image-set.json
+gh attestation verify image-set.json \
+  -R tinylabscom/mvm-images \
+  --signer-workflow tinylabscom/mvm-images/.github/workflows/release.yml \
+  --source-ref "refs/tags/$tag" \
+  --deny-self-hosted-runners
+```
+
+The same command verifies any other subject, a kernel or root filesystem
+included. `--cert-identity
+"https://github.com/tinylabscom/mvm-images/.github/workflows/release.yml@refs/tags/$tag"`
+checks the workflow and tag in one flag; it is the identity `images.lock`
+records under `[signing_identity]`. `--source-digest` with the
+`producer.source_commit` from `image-set.json` also pins the commit.
+
+A passing verification proves that a GitHub-hosted run of `release.yml` in
+this repository, started by that tag at that commit, produced a file with
+exactly these bytes. It does not prove the bytes are what that commit's source
+builds. This is SLSA Build Level 2: the job that builds and publishes the set
+also signs the attestation, so a compromised release job can produce altered
+bytes and a valid attestation for them. Reproducibility is what speaks to an
+uncorrupted build. `.github/workflows/reproduce.yml` rebuilds the builder,
+default-tenant, rootless-tenant and runtime-overlay roles on both
+architectures and fails if a rebuild differs; it runs on pull requests that
+change their inputs, not inside the release, so it vouches for the
+definitions a set is built from rather than for the published bytes.
+
 ### Cadence and retention
 
 Image sets are published when their inputs change — a kernel bump, a Nix input
-update, a guest ABI change — rather than on a calendar. Published releases and
-their assets are retained indefinitely, because old `mvm` versions resolve the
+update, a toolchain move — rather than on a calendar. Until #49 lands, an
+`mvm` pin advance that changes the guest runtime is also such an input; after
+it, a guest change ships with `mvmctl` and publishes no set. Published
+releases and their assets are retained indefinitely, because old `mvm` versions resolve the
 exact set they were built against.
 
 ## Security
@@ -213,8 +309,8 @@ exact set they were built against.
 - No secrets and no customer data, ever, in this repository or its artifacts.
   The only credentials any workflow holds are the short-lived OIDC tokens
   Sigstore keyless signing mints.
-- Signing happens only in a protected release environment, from a protected tag
-  namespace. An untrusted branch cannot mint the allow-listed release identity.
+- Signing and provenance attestation happen only in a protected release
+  environment, from a protected tag namespace. An untrusted branch cannot mint the allow-listed release identity.
 - Third-party actions are pinned by immutable commit SHA.
   `scripts/check-action-pins.sh` refuses anything else on every pull request.
 - Report a suspected compromise of a published artifact or signing identity as
@@ -226,20 +322,20 @@ exact set they were built against.
 
 ```text
 justfile                contributor front door: build, pair, gate and manifest recipes
-flake.nix, flake.lock   the one flake: every image, one mvm pin
+flake.nix, flake.lock   the one flake: every image, one mvm pin (transitional)
 images/
   builder-vm/image.nix       builder VM kernel + rootfs, Stage 0 rootfs, kernel attrs
   default-tenant/image.nix   default workload microVM (verity-sealed prod, dev)
   rootless-tenant/image.nix  generic rootless OCI base (verity-sealed prod, smoke)
-  runtime-overlay/image.nix  runtime overlay and the glibc/musl SDK sidecars
-  initramfs/image.nix        universal initramfs
+  runtime-overlay/image.nix  runtime overlay and the glibc/musl SDK sidecars (transitional)
+  initramfs/image.nix        universal initramfs (transitional)
 kernel/                 builder, workload and rootless kernel configs; standalone flake
 qemu-wasm/              QEMU/WebAssembly engine, smoke image and browser pack
 packaging/              static checks run on staged artifacts
 scripts/                kernel, host-binary, QEMU-wasm and drift tooling
-  assemble-release.py   complete-set assembly; refuses a partial release
-sources/                what was copied from mvm, and the documented rewrites
-SOURCES.md              provenance of every copied file
+  assemble-release.py   complete-set assembly and provenance subjects; refuses a partial release
+sources/                what was copied from mvm, and the documented rewrites (transitional)
+SOURCES.md              provenance of every copied file (transitional)
 ```
 
 The root flake exposes each image role as an attribute set carrying the
@@ -253,20 +349,25 @@ QEMU/WebAssembly outputs are under `qemu-wasm`. The kernel needs nothing from
 
 ## Where the mvm code comes from
 
-The binaries inside the images — the guest agent, the runtime helpers, the SDK
-library, the builder's init — are compiled from `mvm` source against `mvm`'s
-`Cargo.lock`. Their program source stays in `mvm`; the canonical image
-composition, image-specific build policy and published outputs belong here.
-During extraction, this repository takes `mvm` as a flake input pinned to one
-exact commit (`flake.nix`, recorded in `flake.lock`) and still evaluates some
-of `mvm`'s Nix recipes so the moved images can be compared byte-for-byte. That
-is a migration mechanism, not a second ownership path: the end state removes
-canonical image construction from `mvm`, and `mvm` consumes the generated
-image set from this repository. Nothing tracks `mvm`'s `main`, and nothing
-looks for a checkout next to this one. [SOURCES.md](SOURCES.md) records which
-files were copied from `mvm` and every intended difference;
+*Transitional: this section describes the reverse edge #49 removes.*
+
+The `mvm` binaries inside today's images — the guest agent and its helpers,
+the SDK library, the GPU shims, the `mvm-setpriv` the builder image bakes —
+are compiled from `mvm` source against `mvm`'s `Cargo.lock`. This repository
+takes `mvm` as a flake input pinned to one exact commit (`flake.nix`, recorded
+in `flake.lock`) and evaluates `mvm`'s `nix/flake.nix` from it for the guest
+package recipes and for `mkGuest`, which composes both tenant root filesystems
+and gives them their `/init`. The artifact `VERSION` is read from the pinned
+`mvm` `Cargo.toml`. Nothing tracks `mvm`'s `main`, and nothing looks for a
+checkout next to this one. [SOURCES.md](SOURCES.md) records the few files
+still copied from `mvm` and every intended difference;
 `scripts/check-source-drift.sh` fails when a copy differs from `mvm` at the
 pinned commit by anything else.
+
+When #49 lands, the input, the guest-runtime roles, `sources/`, `SOURCES.md`,
+the drift and override checks and `just with-mvm` are deleted, and a
+base-image contract version replaces the hand-mirrored guest protocol
+version. Until then, add no new read of the `mvm` input.
 
 ### Building locally
 
@@ -285,7 +386,9 @@ For a focused iteration, address one role or kernel. At boot ABI 1 the
 builder image bakes no mvm host binaries — the boot contract supplies
 `mvm-host-vm-init` and `mvm-builderd` from mvmctl's payload at boot — so
 `just builder-vm` is a plain, pure `nix build` with no toolchain or
-environment-variable dance.
+environment-variable dance. It still bakes `mvm-setpriv`, compiled from the
+pinned `mvm` source; builder boot ABI 2 moves that into the payload too, and
+the image then declares ABI 2 (#49).
 
 ```sh
 just list
@@ -302,6 +405,9 @@ The optional final arguments select a system or pass Nix flags—for example,
 `just build runtime-overlay default aarch64-linux --no-link`. Tenant production
 outputs require the explicit `--impure` shown above; the builder image
 evaluates pure.
+
+The `runtime-overlay` and `initramfs` recipes above are transitional, as are
+the roles they build.
 
 `MVM_WORKSPACE_PATH` must be unset; the flake refuses to evaluate with it,
 because `mvm`'s `nix/flake.nix` would otherwise build from whatever checkout it
@@ -354,6 +460,8 @@ cgroup v2 subtree is writable, `crun` and `fuse-overlayfs` execute,
 `/dev/net/tun` does not exist, and loopback is the only interface. QEMU and
 Firecracker still receive explicit block/serial/vsock-only plans; the overlay
 is a block device, and no `mvm` process or network device participates.
+Attaching the overlay is transitional: under #49 the boot witnesses switch to
+a small test init and stop depending on `mvm`-built bytes.
 
 `features/standalone_images.feature` holds the human-readable BDD contract.
 `scripts/check_no_network_devices.py` checks kernel, browser, and direct-VMM
@@ -381,6 +489,9 @@ recipes; those recipes are not a second source of truth.
 
 ### Advancing the mvm pin
 
+*Transitional: the pin and this procedure are deleted under #49. Until then
+this is how the guest runtime in a set moves forward.*
+
 1. Change the commit in the `mvm` input URL in `flake.nix` and update
    `flake.lock` (use a full 40-character SHA of a commit on `mvm`'s `main`).
 2. Run `just release-check`. Anything `mvm` changed in the copied
@@ -392,6 +503,11 @@ recipes; those recipes are not a second source of truth.
    commit.
 
 ## Working on images
+
+*Transitional: paired development exists because today's images compile
+`mvm` source. Under #49 it goes away with the `mvm` input; guest work then
+happens in `mvm` alone, and `mvmctl` builds the guest runtime from its own
+checkout. Until then it works as described here.*
 
 Paired local development with `mvm` is a supported workflow, not an escape
 hatch. The intended checkout layout is siblings:

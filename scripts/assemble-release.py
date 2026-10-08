@@ -452,10 +452,33 @@ def pack_manifest(
     return name, outputs["pack_hash"]
 
 
+def write_provenance_subjects(path: Path, subjects: list[tuple[str, str]]) -> None:
+    """Write the build-provenance subjects as a sha256sum-format checksums file.
+
+    The release workflow hands this file to the attestation step, so the set it
+    attests is exactly the set this script assembled: every member artifact,
+    every member's pack manifest and SBOM, and the `image-set.json` root that
+    commits to all of them. A new member is attested by being added to
+    `member_specs`, with no second list to keep in step.
+    """
+    names = [name for name, _ in subjects]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise Refusal(f"provenance subject named twice: {', '.join(duplicates)}")
+    path.write_text("".join(f"{digest}  {name}\n" for name, digest in subjects))
+
+
 def assemble(args: argparse.Namespace) -> None:
     assets = args.artifacts.resolve()
     if not assets.is_dir():
         raise Refusal(f"artifact directory does not exist: {assets}")
+    subjects_path = args.subjects.resolve()
+    # Everything in the artifact directory is uploaded to the release, so a
+    # subjects file written there would publish an unattested file.
+    if assets in subjects_path.parents:
+        raise Refusal(f"provenance subjects must be written outside {assets}")
+    if not subjects_path.parent.is_dir():
+        raise Refusal(f"directory for provenance subjects does not exist: {subjects_path.parent}")
     if not re.fullmatch(r"image-set/v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", args.tag):
         raise Refusal("tag must be image-set/v<semver>")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
@@ -483,9 +506,10 @@ def assemble(args: argparse.Namespace) -> None:
     release_url = f"https://github.com/{REPOSITORY}/releases/download/{args.tag}"
 
     rendered_members = []
+    subjects: list[tuple[str, str]] = []
     for member in members:
         sbom_name, sbom_hash = sbom_for(member, assets, args.issued_at, args.tag)
-        _, pack_hash = pack_manifest(
+        pack_name, pack_hash = pack_manifest(
             member,
             assets,
             args.issued_at,
@@ -521,6 +545,13 @@ def assemble(args: argparse.Namespace) -> None:
             }
         )
         rendered_members.append(rendered)
+        subjects.extend(
+            (artifact["name"], artifact["sha256"]) for artifact in rendered["artifacts"]
+        )
+        # Not `pack_hash`: that is the digest of the manifest with its own
+        # hash field zeroed, and the attestation names the published bytes.
+        subjects.append((pack_name, sha256_file(assets / pack_name)))
+        subjects.append((sbom_name, sbom_hash))
 
     manifest = {
         "schema_version": 2,
@@ -566,8 +597,11 @@ def assemble(args: argparse.Namespace) -> None:
             ]
         )
     )
+    subjects.append(("image-set.json", manifest_hash))
+    write_provenance_subjects(subjects_path, subjects)
     print(f"assembled {len(rendered_members)} members in {assets}")
     print(f"image-set.json sha256 {manifest_hash}")
+    print(f"{len(subjects)} provenance subjects in {subjects_path}")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -578,6 +612,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--issued-at", required=True)
     result.add_argument("--mvm-source", type=Path, required=True)
     result.add_argument("--flake-lock", type=Path, default=Path("flake.lock"))
+    result.add_argument(
+        "--subjects",
+        type=Path,
+        required=True,
+        help="where to write the build-provenance subjects (sha256sum format), "
+        "outside the artifact directory",
+    )
     return result
 
 

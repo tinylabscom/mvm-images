@@ -5,7 +5,8 @@ name: Release image set
 # and role before this job can enter the protected image-release environment.
 # Assembly then refuses missing bytes, and mvm's pinned verifier independently
 # checks the signed manifest, current-train completeness, lock and artifact
-# digests before `gh release create` is allowed to run.
+# digests before `gh release create` is allowed to run. Only a verified set is
+# given a build-provenance attestation, and only an attested set is published.
 on:
   push:
     tags:
@@ -31,7 +32,11 @@ jobs:
     environment: image-release
     permissions:
       contents: write
+      # Sigstore keyless OIDC, for both the cosign signatures and the
+      # build-provenance attestation.
       id-token: write
+      # Store the build-provenance attestation in this repository.
+      attestations: write
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,19 +65,26 @@ jobs:
           printf 'MVM_SOURCE=%s\n' "$(mvm_source_dir)" >> "$GITHUB_ENV"
           nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
           nix profile install "github:NixOS/nixpkgs/${nixpkgs_rev}#cosign"
+      # The assembler also writes the build-provenance subjects: every member
+      # artifact, pack manifest and SBOM, and image-set.json. It writes them
+      # outside release-assets, which is published whole.
       - name: Assemble the complete image set
+        id: assemble
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           source_commit=$(git rev-parse HEAD)
           issued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          subjects="$RUNNER_TEMP/provenance-subjects.sha256"
           scripts/assemble-release.py \
             --artifacts release-assets \
             --tag "$TAG" \
             --source-commit "$source_commit" \
             --issued-at "$issued_at" \
-            --mvm-source "$MVM_SOURCE"
+            --mvm-source "$MVM_SOURCE" \
+            --subjects "$subjects"
+          printf 'subjects=%s\n' "$subjects" >> "$GITHUB_OUTPUT"
       - name: Sign every member pack and the image-set manifest
         env:
           COSIGN_YES: "true"
@@ -96,6 +108,22 @@ jobs:
             --bundle release-assets/image-set.json.bundle \
             --lock release-assets/images.lock \
             --artifacts release-assets
+      # The attestation action reads a subject-checksums value that is not a
+      # file as inline checksums, so a lost file would attest nothing rather
+      # than fail. Checking it against the bytes about to be published first
+      # makes a missing, empty or stale list stop the release.
+      - name: Check the provenance subjects against the assets to publish
+        env:
+          SUBJECTS: ${{ steps.assemble.outputs.subjects }}
+        run: |
+          set -euo pipefail
+          test -s "$SUBJECTS"
+          (cd release-assets && sha256sum --check --strict --quiet "$SUBJECTS")
+          echo "$(wc -l < "$SUBJECTS") provenance subjects match release-assets"
+      - name: Attest build provenance for every member and image-set.json
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ steps.assemble.outputs.subjects }}
       - name: Publish the immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
