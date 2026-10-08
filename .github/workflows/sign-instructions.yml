@@ -56,6 +56,6 @@ jobs:
           persist-credentials: false
 
       # Pin a full commit SHA to fix the signing code this repository runs.
-      - uses: tinylabscom/mvm/.github/actions/sign-instructions@11a74da10316c6a4bcbb4416996280b0f9188f51
+      - uses: tinylabscom/mvm/.github/actions/sign-instructions@1a009f33390dc06548f11751eb76575576fe767e
         with:
           cache-key: instruction-signing
