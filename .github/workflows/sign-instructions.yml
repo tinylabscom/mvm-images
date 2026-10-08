@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: tinylabscom/mvm/.github/actions/sign-instructions@main
+      - uses: tinylabscom/mvm/.github/actions/sign-instructions@4926fa6a5f3e481c14c9f6d82444309ea1461b1e # mvm PR #4070
