@@ -20,6 +20,9 @@ let
     installPhase = ''
       mkdir -p $out/bin $out/share
       cp init $out/bin/init
+      # Native DWARF references compiler header store paths and drags the
+      # build toolchain into closureInfo. Only the BPF object needs debug/BTF.
+      $STRIP --strip-debug $out/bin/init
       cp probe.bpf.o $out/share/
     '';
     # BPF ELF must retain BTF/CO-RE sections; never feed it to target strip.
@@ -38,8 +41,12 @@ let
     cp ${probe}/share/probe.bpf.o root/probe.bpf.o
     # All files are image-owned uid/gid 0, including the execute-only tool.
     mkdir -p $out
-    du -sh root
-    truncate -s 256M $out/rootfs.ext2
+    root_kib=$(du -sk root | cut -f1)
+    # Account for ext2 metadata and population overhead rather than assuming
+    # a fixed closure size across architectures and toolchain revisions.
+    image_mib=$(( (root_kib * 5 / 4 + 1023) / 1024 + 32 ))
+    echo "probe closure: $root_kib KiB; filesystem: $image_mib MiB"
+    truncate -s "$image_mib"M $out/rootfs.ext2
     E2FSPROGS_FAKE_TIME=1 mke2fs -t ext2 -F -m 0 \
       -U 00000000-0000-0000-0000-000000009042 -E root_owner=0:0 \
       -d root $out/rootfs.ext2
