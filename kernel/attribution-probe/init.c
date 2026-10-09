@@ -44,7 +44,8 @@ static void deadline(int sig)
 {
     (void)sig;
     static const char marker[] = "ATTRIBUTION-PROBE:FAIL:guest-timeout\n";
-    (void)write(2, marker, sizeof(marker) - 1);
+    if (write(2, marker, sizeof(marker) - 1) != (ssize_t)(sizeof(marker) - 1))
+        _exit(2); /* Diagnostic failure must still fail the bounded probe. */
     _exit(1);
 }
 
