@@ -544,11 +544,14 @@ static void negative_loader_checks(void)
 }
 
 #include "bridge.c"
+#include "exec.c"
 
 int main(int argc, char **argv)
 {
     signal(SIGALRM, deadline);
     signal(SIGPIPE, SIG_IGN);
+    if (argc == 2 && !strcmp(argv[1], "--exec-tool"))
+        return exec_tool();
     if (argc >= 2 && !strcmp(argv[1], "--bridge-egress"))
         return bridge_egress();
     if (argc == 4 && !strcmp(argv[1], "--bridge-tool"))
@@ -655,6 +658,7 @@ int main(int argc, char **argv)
     expected[CONNECT6_DENY]++;
     exact_counters("recreated-cgroup");
     bridge_probe(obj, map, storage);
+    exec_probe(obj);
     for (uint32_t key = 0; key < NCOUNTERS; key++) {
         dprintf(1, "ATTRIBUTION-PROBE:WITNESS:%u=%llu\n",
                 key, (unsigned long long)expected[key]);

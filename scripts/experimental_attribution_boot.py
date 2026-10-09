@@ -13,6 +13,12 @@ LIFECYCLE_PASS = "ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation
 BRIDGE_PASS = "ATTRIBUTION-PROBE:PASS:egress-label-bridge-development-only"
 BRIDGE_CAPACITY = "ATTRIBUTION-PROBE:CAPACITY:2:boot-local-tombstones:no-reuse:exhaustion-closed"
 BOOTSTRAP_CAPS = "ATTRIBUTION-PROBE:BOOTSTRAP-CAPS:NET_ADMIN12,PERFMON38,BPF39:no-SYS_ADMIN"
+EXEC_PASS = "ATTRIBUTION-PROBE:PASS:native-ELF-task-storage-one-shot-exec-admission-partial"
+EXEC_HOOKS = "ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1"
+EXEC_UNSUPPORTED = (
+    "ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,"
+    "production-exec-decision,concurrent-exec-revocation"
+)
 BRIDGE_UNSUPPORTED = (
     "ATTRIBUTION-PROBE:UNSUPPORTED:production-slot-reuse,host-FlowMux,"
     "exec-identity,snapshot-restore,production-loader"
@@ -47,7 +53,8 @@ def validate_output(output: str, returncode: int) -> None:
     if returncode != 0 or "ATTRIBUTION-PROBE:FAIL:" in output:
         raise ValueError(f"guest/VMM failed (exit {returncode})")
     markers = (PASS, LIFECYCLE_PASS, BRIDGE_PASS, BRIDGE_CAPACITY,
-               BOOTSTRAP_CAPS, BRIDGE_UNSUPPORTED, UNSUPPORTED)
+               BOOTSTRAP_CAPS, BRIDGE_UNSUPPORTED, UNSUPPORTED,
+               EXEC_PASS, EXEC_HOOKS, EXEC_UNSUPPORTED)
     if any(lines.count(marker) != 1 for marker in markers):
         raise ValueError("missing/duplicate exact partial-success and unsupported markers")
 

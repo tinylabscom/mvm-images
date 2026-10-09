@@ -7,12 +7,22 @@
 #include <linux/in.h>
 #include <linux/in6.h>
 
+struct super_block {
+    __u32 s_dev;
+} __attribute__((preserve_access_index));
 struct inode {
     unsigned short i_mode;
+    unsigned long i_ino;
+    struct super_block *i_sb;
 } __attribute__((preserve_access_index));
 struct file {
     struct inode *f_inode;
 } __attribute__((preserve_access_index));
+struct linux_binprm {
+    struct file *file;
+    char buf[256];
+} __attribute__((preserve_access_index));
+struct task_struct;
 struct sock_common {
     __u16 skc_family, skc_dport;
     __u32 skc_daddr;
@@ -278,6 +288,81 @@ int BPF_PROG(receive, struct file *file, int ret)
         return -1; /* EPERM */
     }
     return 0;
+}
+
+/* This scope is activated only after the existing bridge/socket witnesses.
+ * Absent scope is not a universal execution policy. A present tombstone denies. */
+struct exec_inode {
+    __u64 dev, ino;
+};
+struct exec_permit {
+    __u64 cgroup, generation;
+    struct exec_inode file;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, __u64);
+    __type(value, struct admission);
+} exec_scope SEC(".maps");
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1);
+    __type(key, struct exec_inode);
+    __type(value, __u64);
+} exec_inodes SEC(".maps");
+struct {
+    __uint(type, BPF_MAP_TYPE_TASK_STORAGE);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, int);
+    __type(value, struct exec_permit);
+} exec_permits SEC(".maps");
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 3);
+    __type(key, __u32);
+    __type(value, __u64);
+} exec_witness SEC(".maps");
+
+static __always_inline void exec_count(__u32 key)
+{
+    __u64 *value = bpf_map_lookup_elem(&exec_witness, &key);
+    if (value)
+        __sync_fetch_and_add(value, 1);
+}
+
+SEC("lsm.s/bprm_check_security")
+int BPF_PROG(exec_admit, struct linux_binprm *bprm, int ret)
+{
+    if (ret)
+        return ret;
+    __u64 cg = bpf_get_current_cgroup_id();
+    struct admission *scope = bpf_map_lookup_elem(&exec_scope, &cg);
+    if (!scope)
+        return 0;
+    exec_count(0);
+    /* get_current_task_btf returns the kernel-verified task type. No scalar
+     * TGID, probe-read pointer cast, or workload-supplied identity is used. */
+    struct task_struct *task = bpf_get_current_task_btf();
+    struct exec_permit *permit =
+        bpf_task_storage_get(&exec_permits, task, 0, 0);
+    struct exec_inode file = {
+        .dev = BPF_CORE_READ(bprm, file, f_inode, i_sb, s_dev),
+        .ino = BPF_CORE_READ(bprm, file, f_inode, i_ino),
+    };
+    __u64 *native = bpf_map_lookup_elem(&exec_inodes, &file);
+    unsigned char magic[4] = {};
+    BPF_CORE_READ_INTO(&magic, bprm, buf);
+    if (scope->active && scope->generation && permit && native && *native == 1 &&
+        permit->cgroup == cg && permit->generation == scope->generation &&
+        permit->file.dev == file.dev && permit->file.ino == file.ino &&
+        magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' &&
+        bpf_task_storage_delete(&exec_permits, task) == 0) {
+        exec_count(1);
+        return 0;
+    }
+    exec_count(2);
+    return -1; /* EPERM, including every unknown executable in this scope. */
 }
 
 char LICENSE[] SEC("license") = "GPL";

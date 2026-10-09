@@ -38,6 +38,13 @@ let
     cp ${probe}/bin/init root/init
     cp ${probe}/bin/init root/tool
     chmod 0551 root/tool
+    cp root/tool root/tool-copy
+    chmod 0551 root/tool-copy
+    ln root/tool root/tool-hard
+    mkdir root/exec-fixtures
+    printf '#!/exec-script-next\n' > root/exec-script
+    printf '#!/tool\n' > root/exec-script-next
+    chmod 0551 root/exec-script root/exec-script-next
     cp ${probe}/share/probe.bpf.o root/probe.bpf.o
     # All files are image-owned uid/gid 0, including the execute-only tool.
     mkdir -p $out

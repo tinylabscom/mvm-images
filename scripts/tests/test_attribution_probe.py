@@ -28,7 +28,8 @@ class ProbeTests(unittest.TestCase):
     def test_acceptance_requires_all_exact_markers_clean_exit_and_no_failure(self):
         markers = (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
                    boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
-                   boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED)
+                   boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED,
+                   boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED)
         good = "\r\n".join(markers) + "\r\n"
         boot.validate_output(good, 0)
         for output, code in [
@@ -66,10 +67,12 @@ class ProbeTests(unittest.TestCase):
     def test_guest_and_host_coverage_markers_cannot_drift(self):
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
         bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
+        execute = (ROOT / "kernel/attribution-probe/exec.c").read_text()
         for marker in (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
                        boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
-                       boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED):
-            self.assertIn(f'"{marker}\\n"', init + bridge)
+                       boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED,
+                       boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED):
+            self.assertIn(f'"{marker}\\n"', init + bridge + execute)
         for unsupported in ("production-egress-bridge", "claim-protocol",
                             "verifier-faults", "exec-identity",
                             "concurrent-teardown", "non-TCP"):
@@ -91,7 +94,7 @@ class ProbeTests(unittest.TestCase):
         self.assertNotIn('SEC("lsm.s/socket_connect")', bpf)
         self.assertNotIn("BPF_CORE_READ(socket", bpf)
         self.assertNotIn("bpf_get_current_uid_gid", bpf)
-        self.assertEqual(bpf.count("if (ret)\n        return ret;"), 3)
+        self.assertEqual(bpf.count("if (ret)\n        return ret;"), 4)
 
     def test_real_api_matrix_and_exact_counters_are_required(self):
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
@@ -202,6 +205,61 @@ class ProbeTests(unittest.TestCase):
                          "exact_cap_mask(UINT64_C(1) << CAP_NET_BIND_SERVICE, true)"):
             self.assertIn(contract, bridge)
         self.assertNotIn("<< CAP_SYS_ADMIN", bridge)
+
+    def test_exec_scope_is_exact_task_generation_and_opened_inode(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        execute = (ROOT / "kernel/attribution-probe/exec.c").read_text()
+        init = (ROOT / "kernel/attribution-probe/init.c").read_text()
+        for contract in (
+            'SEC("lsm.s/bprm_check_security")', "BPF_MAP_TYPE_TASK_STORAGE",
+            "struct task_struct *task = bpf_get_current_task_btf()",
+            "bpf_task_storage_get(&exec_permits, task, 0, 0)",
+            "bpf_task_storage_delete(&exec_permits, task) == 0",
+            "permit->cgroup == cg", "permit->generation == scope->generation",
+            "permit->file.dev == file.dev", "permit->file.ino == file.ino",
+            "file, f_inode, i_sb, s_dev", "file, f_inode, i_ino",
+            "if (!scope)\n        return 0",
+        ):
+            self.assertIn(contract, bpf)
+        self.assertNotIn("bpf_get_current_pid_tgid", bpf)
+        self.assertLess(init.index("bridge_probe(obj, map, storage)"),
+                        init.index("exec_probe(obj)"))
+        for contract in (
+            "SYS_pidfd_open, child, 0",
+            "bpf_map_update_elem(permits, &pidfd, &permit, BPF_NOEXIST)",
+            "bpf_map_freeze(inodes)", "getuid() == 902", "getgid() == 907",
+            "setresuid(902, 902, 902)", "setresgid(907, 907, 907)",
+            "SYS_close_range, 6, ~0U, 0", "dup3(executable, 5, O_CLOEXEC)",
+            "totals[0] == 16 && totals[1] == 1 && totals[2] == 15",
+            'exact_counters("exec-keeps-original-socket-counters")',
+            "CHECK(interpreters == 1)", "PT_INTERP", "EM_X86_64", "EM_AARCH64",
+        ):
+            self.assertIn(contract, execute)
+
+    def test_exec_replays_unknown_files_and_preexec_revocation_are_explicit(self):
+        execute = (ROOT / "kernel/attribution-probe/exec.c").read_text()
+        for contract in (
+            'exec_denied("/proc/self/exe", 0)',
+            'exec_denied("/proc/self/exe", 1)',
+            'exec_denied("/proc/self/exe", 2)', "fexecve(fd, exec_args, exec_env)",
+            'exec_denied("/tool-copy", 0)', 'exec_denied("/tool-hard", 0)',
+            'exec_denied(EXEC_DIR "/foreign", 0)',
+            'exec_denied(EXEC_DIR "/bind", 0)', 'exec_denied("/exec-script", 0)',
+            'exec_denied("/tool", 0)', "pid_t descendant = fork()",
+            "copy.st_ino != tool.st_ino", "foreign.st_dev != tool.st_dev",
+            "hard.st_ino == tool.st_ino", "bind.st_ino == tool.st_ino",
+            "if (trial == 2)\n            scope.active = 0",
+            "if (trial == 3)\n            scope.generation++",
+            "CHECK(rc == -1 && errno == EPERM)",
+        ):
+            self.assertIn(contract, execute)
+        delete = execute.index("bpf_map_delete_elem(permits, &pidfd)")
+        fence = execute.index("scope.generation++;", delete)
+        release = execute.index("exec_byte(gate[1], 'X')", fence)
+        reap = execute.index("wait_ok(child)", release)
+        self.assertLess(delete, fence)
+        self.assertLess(fence, release)
+        self.assertLess(release, reap)
 
 
 if __name__ == "__main__":

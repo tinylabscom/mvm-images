@@ -129,6 +129,16 @@ snapshots **27**, allowed sends **39**, denied sends **34**, infrastructure send
 The per-command checks are stronger than these totals: a missing denial on one
 API cannot be hidden by extra hook calls on another.
 
+The native ELF extension adds three required exact markers, without removing
+or changing any earlier marker (including earlier `exec-identity` unsupported
+claims, which still describe the earlier socket/bridge phases):
+
+```text
+ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1
+ATTRIBUTION-PROBE:PASS:native-ELF-task-storage-one-shot-exec-admission-partial
+ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,production-exec-decision,concurrent-exec-revocation
+```
+
 Diagnostics and verifier messages remain in the
 serial log. An unavailable BTF, syscall, helper, verifier operation, attach type
 or hook is a failing result to investigate, not a skip or fallback.
@@ -250,6 +260,101 @@ Accepted TCP sockets are **read-only fixtures**: the egress does not send on
 them or mark them as infrastructure. There is no broad uid-989/INET SEND
 exemption. Bidirectional proxy behavior, production claims, executable identity,
 host FlowMux, snapshot/restore and production slot reuse are not proved.
+
+## Bounded native ELF exec admission
+
+The bridge/socket baseline at `910f1db` passed both architectures. That evidence
+does **not** prove the new exec extension. `exec.c` runs only after every original
+socket/bridge scenario; it attaches the new LSM and installs a dedicated scope
+at that point. The original counter array is unchanged, and every exec
+acknowledgment checks that **all original socket counters remain unchanged**.
+There is no CI, production recipe, kernel config, lock or runtime-artifact change.
+
+The sleepable `bprm_check_security` program makes one bounded rule: **inside the
+explicit exec-probe cgroup**, every unknown executable is denied with EPERM.
+Outside that scope, it does not impose an exec policy. A present inactive scope
+is a denial tombstone. The trusted root fixture opens `/tool` using O_PATH,
+checks its root-owned 0551 identity, checks the native ELF64 little-endian
+machine and program headers, and installs its `{superblock dev, inode}` in a
+capacity-one hash map. The map is frozen and an attempted update must fail
+with EPERM. Linux internal `s_dev` is derived explicitly from `st_dev`'s
+major/minor, not compared to the differently encoded userspace number.
+
+After fork, while the child waits on a pipe, the trusted parent opens its
+pidfd and seeds `BPF_MAP_TYPE_TASK_STORAGE` through that pidfd with
+`{cgroup, generation, dev, inode}`. It reads the value back before releasing
+the child. The LSM obtains a verifier-typed current `task_struct` using
+`bpf_get_current_task_btf`, requires active matching generation and exact
+opened `bprm->file` identity in the frozen native map, checks ELF magic, and
+deletes that exact task's permit before allowing the exec. Successful exec
+must leave storage absent, witnessed through the same still-live pidfd.
+Neither argv, a nonce, nor raw TGID identifies the task. Userspace maps and
+argv are trusted **fixture inputs**, not a real host authorization decision.
+
+The actual child has **UID 902/GID 907**, zero effective/permitted/inheritable/
+bounding/ambient capabilities, no-new-privileges, and nondumpable state.
+Root map/link/listener/cgroup FDs are closed before exec. Only standard streams,
+two synchronization pipes, and the O_PATH executable FD remain; that FD is
+CLOEXEC and its absence is checked after exec. No read-permission relaxation
+or capabilities are granted to the tool. The pipes add no socket exemption.
+
+Every operation is individually stopped on an acknowledgment while PID 1
+checks the **exact** exec counters `{hooks, allows, denies}`:
+
+* Before its own initial exec, the seeded task forks a descendant. The
+  descendant's `/tool` exec must return EPERM without consuming the parent's
+  permit. The parent subsequently executes that exact O_PATH file using
+  `execveat(AT_EMPTY_PATH)` successfully once.
+* After success, the same process must get EPERM from `/proc/self/exe`
+  `execve`, O_PATH `execveat`, and `fexecve`. Each is exactly one denied hook.
+* Identical-byte `/tool-copy` has a distinct inode; an identical-byte copy on
+  sealed read-only tmpfs has a distinct superblock device. Both are denied,
+  as are hardlink and read-only bind aliases of the protected inode.
+* A script chain (`/exec-script` → `/exec-script-next` → `/tool`) is denied
+  at its first hook, never admitted as a supported format.
+* Separate gated children test absent permit, inactive scope, changed
+  generation, distinct inode, foreign superblock and script chain while a
+  native `/tool` permit is still seeded for that exact task where applicable.
+  Unknown-file attempts cannot be explained solely by missing task permits.
+* Unused permits are explicitly removed and read back absent while the child
+  is alive and waiting for the final acknowledgment. An inactive newer
+  generation is installed **before** release and reap. Task lifetime, not
+  numeric PID reuse, controls storage. No artificial PID reuse test is claimed.
+
+The expected totals are **16 hooks, 1 allow, 15 denies**. The dynamically linked
+native fixture must contain exactly one `PT_INTERP`, whose path is checked as
+root-owned and not group/other-writable. Its successful native exec must
+produce **exactly one** `bprm_check_security` invocation, including the actual
+dynamic loader path. Linux `fs/exec.c` calls the hook per
+`search_binary_handler`, not per candidate native handler; script rewrites
+re-enter that search. `fs/binfmt_elf.c` opens/loads `PT_INTERP` itself rather than
+rewriting `bprm->interpreter`. The runtime counter gate, not these source
+observations alone, proves the expected behavior. Static ELF, compat ELF,
+arbitrary interpreters and executable loading after initial exec are not tested.
+
+### Exact Linux 6.12 legality and runtime gates
+
+Upstream v6.12.111
+[`bpf_task_storage.c`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/bpf/bpf_task_storage.c)
+implements userspace map lookup/update/delete with `pidfd_get_pid` followed by
+`pid_task(..., PIDTYPE_PID)`. Its helper argument is
+`ARG_PTR_TO_BTF_ID_OR_NULL` for the tracing task type, and its task map does not
+inherit a permit on fork. `kernel/trace/bpf_trace.c` exposes task-storage helpers
+to tracing programs; `kernel/bpf/bpf_lsm.c` delegates to that helper table and
+lists `bprm_check_security` as sleepable. These are source legality evidence,
+**not verifier acceptance**. Both-architecture BTF relocation, the real
+sleepable program load/attach, pidfd map update/readback/delete, task-storage
+non-inheritance and hook multiplicity must all pass in the real pinned kernel.
+Any failure aborts rather than skipping, widening permissions, changing kernel
+config, or falling back to a raw-TGID permit.
+
+This is **not full production byte attestation**: device/inode identity is
+boot-local and trusted files are sealed fixtures, not IMA/fs-verity proofs.
+The gate does not authenticate the dynamic interpreter/shared-library bytes,
+prevent every way to execute copied bytes, inspect all mappings, solve inode/
+device reuse across restored snapshots, or synchronize concurrent revocation.
+The root fixture is trusted bootstrap/test infrastructure, not a production
+loader. Original socket/bridge unsupported claims remain in force.
 
 ## Explicitly unsupported, even after partial PASS
 
