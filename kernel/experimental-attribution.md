@@ -1,5 +1,10 @@
 # Development-only invocation-attribution kernel spike
 
+The [native partial hook probe](./attribution-probe/README.md) adds isolated
+development executable/rootfs outputs and a direct bounded QEMU test. Its
+blanket socket-transfer refusal is not approved production policy; its partial
+PASS does not establish full PS13 attribution or lifecycle security.
+
 This is an **experimental feasibility configuration**, not a production
 profile, release role, or security guarantee. It wraps `workload.nix`, not
 `rootless.nix`, and reuses `base.nix`'s exact Linux **6.12.111** source and the
@@ -71,6 +76,12 @@ and retains the images, resolved configs, source commits and SHA-256 hashes
 as workflow artifacts for seven days. It creates no release and is not called
 by the publication workflows. Successful compilation alone does not prove
 bootability, hook behavior, enforcement, or performance.
+
+After both kernel builds pass, native Linux jobs build the standalone probe
+rootfs and boot it directly under QEMU with explicit TCG and mandatory vsock.
+This is a functional hook-viability gate, not a boot-latency measurement.
+Guest logs retain the exact partial-success and unsupported-coverage markers;
+the probe's blanket socket-FD receipt denial is not a production policy.
 
 Pure native checks (including on macOS; no Nix evaluation required):
 

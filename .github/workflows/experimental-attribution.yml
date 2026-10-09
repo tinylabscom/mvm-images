@@ -51,6 +51,81 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  probe:
+    name: Probe kernel hooks (${{ matrix.system }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            arch: x86_64
+            runner: ubuntu-24.04
+            image: bzImage
+            qemu: qemu-system-x86
+          - system: aarch64-linux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: Image
+            qemu: qemu-system-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: experimental-kernel-${{ matrix.system }}
+          path: ${{ runner.temp }}/attribution-kernel
+      - name: Verify kernel identity
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/attribution-kernel"
+          test "$(cat source-commit)" = "$GITHUB_SHA"
+          sha256sum -c SHA256SUMS
+      - name: Build standalone native probe
+        env:
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests -p 'test_attribution_probe.py'
+          nix build --no-write-lock-file \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-probe-rootfs" \
+            --out-link "$RUNNER_TEMP/attribution-rootfs"
+      - name: Prepare direct VMM and mandatory vsock
+        env:
+          QEMU_PACKAGE: ${{ matrix.qemu }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y "$QEMU_PACKAGE"
+          sudo modprobe vhost_vsock
+          test -c /dev/vhost-vsock
+      - name: Execute partial hook viability probe
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          # Explicit TCG is a functional hook test, NOT a boot-performance
+          # measurement. Both architectures still require real host vsock.
+          sudo python3 scripts/experimental_attribution_boot.py \
+            --arch "$ARCH" \
+            --kernel "$RUNNER_TEMP/attribution-kernel/$IMAGE" \
+            --rootfs "$RUNNER_TEMP/attribution-rootfs/rootfs.ext2" \
+            --accel tcg --timeout 90 \
+            2>&1 | tee "$RUNNER_TEMP/attribution-probe.log"
+      - name: Retain guest probe evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: experimental-probe-${{ matrix.system }}
+          path: ${{ runner.temp }}/attribution-probe.log
+          if-no-files-found: warn
+          retention-days: 7
+
   build:
     name: Build kernel (${{ matrix.system }})
     needs: resolve
@@ -86,6 +161,11 @@ jobs:
           evidence="$RUNNER_TEMP/attribution-kernel"
           mkdir -p "$evidence"
           cp "$output/$IMAGE" "$evidence/$IMAGE"
+          if [ "$SYSTEM" = x86_64-linux ]; then
+            # Firecracker consumes ELF; the standalone QEMU probe consumes
+            # the Linux boot-protocol image from the same derivation.
+            cp "$output/bzImage" "$evidence/bzImage"
+          fi
           cp "$config" "$evidence/kernel.config"
           printf '%s\n' "$GITHUB_SHA" > "$evidence/source-commit"
           printf '%s\n' "$output" > "$evidence/nix-store-path"
@@ -102,7 +182,12 @@ jobs:
               assert header[56:60] == b"ARM\x64", "expected arm64 Image header"
           print(f"{system}: {path.stat().st_size} bytes; artifact format verified")
           PY
-          (cd "$evidence" && sha256sum "$IMAGE" kernel.config source-commit > SHA256SUMS)
+          (cd "$evidence" &&
+            if [ "$SYSTEM" = x86_64-linux ]; then
+              sha256sum "$IMAGE" bzImage kernel.config source-commit > SHA256SUMS
+            else
+              sha256sum "$IMAGE" kernel.config source-commit > SHA256SUMS
+            fi)
       - name: Retain experimental kernel evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

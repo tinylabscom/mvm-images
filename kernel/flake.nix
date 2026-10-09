@@ -35,6 +35,7 @@
 
           # BEGIN development-only experimental-attribution
           experimentalAttribution = import ./experimental-attribution.nix { inherit pkgs base; };
+          attributionProbe = import ./attribution-probe { inherit pkgs; };
           # END development-only experimental-attribution
 
           # "aarch64" / "x86_64" for the published filenames (matches the
@@ -132,6 +133,8 @@
           # BEGIN development-only experimental-attribution
           experimental-attribution-vmlinux = experimentalAttribution;
           experimental-attribution-configfile = experimentalAttribution.passthru.configfile;
+          experimental-attribution-probe = attributionProbe.probe;
+          experimental-attribution-probe-rootfs = attributionProbe.rootfs;
           # END development-only experimental-attribution
           workload-vmlinux = workload;
           rootless-vmlinux = rootless;
