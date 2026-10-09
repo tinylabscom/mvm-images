@@ -9,9 +9,10 @@ import subprocess
 import sys
 
 PASS = "ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial"
+LIFECYCLE_PASS = "ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial"
 UNSUPPORTED = (
-    "ATTRIBUTION-PROBE:UNSUPPORTED:socket-use-lifecycle,claim-protocol,"
-    "verifier-faults,exec-identity"
+    "ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,"
+    "verifier-faults,exec-identity,concurrent-teardown,non-TCP"
 )
 
 
@@ -38,7 +39,7 @@ def validate_output(output: str, returncode: int) -> None:
     lines = output.replace("\r", "").splitlines()
     if returncode != 0 or "ATTRIBUTION-PROBE:FAIL:" in output:
         raise ValueError(f"guest/VMM failed (exit {returncode})")
-    if lines.count(PASS) != 1 or lines.count(UNSUPPORTED) != 1:
+    if any(lines.count(marker) != 1 for marker in (PASS, LIFECYCLE_PASS, UNSUPPORTED)):
         raise ValueError("missing/duplicate exact partial-success and unsupported markers")
 
 

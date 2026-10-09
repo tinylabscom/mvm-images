@@ -25,13 +25,18 @@ class ProbeTests(unittest.TestCase):
             for forbidden in ("virtio-net", "-netdev", "mvmctl", "bin/dev", "runtime-overlay"):
                 self.assertNotIn(forbidden, " ".join(cmd))
 
-    def test_acceptance_requires_both_exact_markers_clean_exit_and_no_failure(self):
-        good = boot.PASS + "\r\n" + boot.UNSUPPORTED + "\r\n"
+    def test_acceptance_requires_all_exact_markers_clean_exit_and_no_failure(self):
+        markers = (boot.PASS, boot.LIFECYCLE_PASS, boot.UNSUPPORTED)
+        good = "\r\n".join(markers) + "\r\n"
         boot.validate_output(good, 0)
         for output, code in [
             ("", 0), (boot.PASS, 0), (good, 1), (good + boot.PASS + "\n", 0),
             (good + "ATTRIBUTION-PROBE:FAIL:child\n", 0),
             ("prefix" + good, 0), (good.replace("partial", "production"), 0),
+            # The previously passing connect/SCM probe is not lifecycle evidence.
+            (boot.PASS + "\n" + boot.UNSUPPORTED + "\n", 0),
+        ] + [(good.replace(marker + "\r\n", ""), 0) for marker in markers] + [
+            (good + marker + "\n", 0) for marker in markers
         ]:
             with self.subTest(output=output, code=code):
                 with self.assertRaises(ValueError):
@@ -55,6 +60,76 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('put("/proc/sys/kernel/unprivileged_bpf_disabled", "1")', init)
         self.assertLess(init.index('attach(obj, "receive"'), init.index("launch(false, false, -1)"))
         self.assertNotIn("/proc/self", init)
+
+    def test_guest_and_host_coverage_markers_cannot_drift(self):
+        init = (ROOT / "kernel/attribution-probe/init.c").read_text()
+        for marker in (boot.PASS, boot.LIFECYCLE_PASS, boot.UNSUPPORTED):
+            self.assertIn(f'"{marker}\\n"', init)
+        for unsupported in ("production-egress-bridge", "claim-protocol",
+                            "verifier-faults", "exec-identity",
+                            "concurrent-teardown", "non-TCP"):
+            self.assertIn(unsupported, boot.UNSUPPORTED)
+        self.assertNotIn("socket-use-lifecycle", boot.UNSUPPORTED)
+
+    def test_generation_policy_is_socket_owned_and_checked_at_use(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        for contract in (
+            "BPF_MAP_TYPE_HASH", "BPF_MAP_TYPE_SK_STORAGE", "BPF_F_NO_PREALLOC",
+            'SEC("lsm/socket_connect")', 'SEC("lsm.s/socket_sendmsg")',
+            'SEC("lsm.s/file_receive")', "struct sock *sk = socket->sk",
+            "BPF_SK_STORAGE_GET_F_CREATE", "a->active", "a->label", "a->generation",
+            "s->cgroup == bpf_get_current_cgroup_id()",
+            "s->label == a->label", "s->generation == a->generation",
+            "old->generation == a->generation",
+        ):
+            self.assertIn(contract, bpf)
+        self.assertNotIn('SEC("lsm.s/socket_connect")', bpf)
+        self.assertNotIn("BPF_CORE_READ(socket", bpf)
+        self.assertNotIn("bpf_get_current_uid_gid", bpf)
+        self.assertEqual(bpf.count("if (ret)\n        return ret;"), 3)
+
+    def test_real_api_matrix_and_exact_counters_are_required(self):
+        init = (ROOT / "kernel/attribution-probe/init.c").read_text()
+        for call in ("sendmsg(fd,", "write(fd, &byte", "writev(fd,",
+                     "splice(pipefd[0],", "sendfile(fd,"):
+            self.assertIn(call, init)
+        for phase in ("active", "cross-cgroup-inherited", "retired",
+                      "replaced-generation", "new-generation"):
+            self.assertIn(f'"{phase}"', init)
+        self.assertIn("CHECK(rc == -1 && errno == EPERM)", init)
+        self.assertIn("if (value != expected[key])", init)
+        self.assertNotIn("value >=", init)
+        self.assertIn("expected[SEND_ALLOW] += allows", init)
+        self.assertIn("expected[SEND_DENY] += denies", init)
+        self.assertIn('exact_counters("command")', init)
+        self.assertIn("MSG_DONTWAIT) == -1 && errno == EAGAIN", init)
+        for family in ("AF_INET, listen4", "AF_INET6, listen6"):
+            self.assertIn(f"lifecycle({family}", init)
+        self.assertIn("CHECK(setsid() >= 0)", init)
+        self.assertIn('execl("/tool", "/tool", "--descendant"', init)
+        for program in ("receive", "label_connect", "use_socket"):
+            self.assertLess(init.index(f'attach(obj, "{program}"'),
+                            init.index("launch(false, false, -1)"))
+
+    def test_infrastructure_and_alternate_paths_are_explicit(self):
+        init = (ROOT / "kernel/attribution-probe/init.c").read_text()
+        for contract in (
+            "CHECK(domain == AF_UNIX)", "CHECK(type == SOCK_SEQPACKET)",
+            ".infrastructure = 1", "&& !label.infrastructure",
+            "SYS_close_range, 5, ~0U, 0",
+            'put(inside ? INV "/cgroup.procs" : OTHER "/cgroup.procs", "0")',
+            ".label = 43, .generation = admission.generation, .active = 1",
+            "CHECK(other_id && other_id != id)",
+            "SYS_pidfd_getfd, pidfd, 4, 0) == -1 && errno == EPERM",
+            "O_RDWR | O_CLOEXEC) == -1 && errno == EACCES",
+            "O_RDWR | O_CLOEXEC) == -1 && errno == ENXIO",
+            "SYS_io_uring_setup, 1, &params) == -1 && errno == ENOSYS",
+            "admission.active = 0", "admission.generation++",
+            "alarm(20)", "alarm(60)",
+        ):
+            self.assertIn(contract, init)
+        self.assertNotIn("readdir", init)
+        self.assertNotIn("SYS_ptrace", init)
 
 
 if __name__ == "__main__":

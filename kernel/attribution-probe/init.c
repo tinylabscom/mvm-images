@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <linux/bpf.h>
 #include <linux/capability.h>
+#include <linux/io_uring.h>
 #include <linux/lsm.h>
 #include <linux/securebits.h>
 #include <net/if.h>
@@ -19,10 +20,12 @@
 #include <sys/prctl.h>
 #include <sys/reboot.h>
 #include <sys/resource.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <grp.h>
@@ -31,7 +34,19 @@
 
 #define CG "/sys/fs/cgroup"
 #define INV CG "/invocation"
+#define OTHER CG "/other-invocation"
 #define PORT 19042
+
+struct admission {
+    uint64_t label, generation, active;
+};
+struct socket_label {
+    uint64_t cgroup, label, generation, infrastructure;
+};
+enum { CONNECT4, CONNECT6, RECEIVE_DENY, CONNECT4_DENY, CONNECT6_DENY,
+       SNAPSHOT, SEND_ALLOW, SEND_DENY, INFRA_SEND, NCOUNTERS };
+static int witnesses;
+static uint64_t expected[NCOUNTERS];
 
 static void die(const char *what)
 {
@@ -97,6 +112,8 @@ static void check_unprivileged(void)
     fd = open(CG "/cgroup.procs", O_WRONLY);
     CHECK(fd == -1 && errno == EACCES);
     fd = open(INV "/cgroup.procs", O_WRONLY);
+    CHECK(fd == -1 && errno == EACCES);
+    fd = open(OTHER "/cgroup.procs", O_WRONLY);
     CHECK(fd == -1 && errno == EACCES);
     union bpf_attr attr = {
         .map_type = BPF_MAP_TYPE_ARRAY, .key_size = 4,
@@ -199,6 +216,288 @@ static int tool(bool admitted, int channel)
     return 0;
 }
 
+/* Every API emits exactly one byte; setup uses non-socket FDs. A failure must
+ * be EPERM, and PID 1 separately demands exactly one socket_sendmsg denial. */
+static void transmit(int fd, int api, bool allowed)
+{
+    static const char bytes[] = { 'M', 'W', 'V', 'P', '\177' };
+    char byte = bytes[api];
+    struct iovec io = { .iov_base = &byte, .iov_len = 1 };
+    struct msghdr msg = { .msg_iov = &io, .msg_iovlen = 1 };
+    ssize_t rc = -1;
+    int saved;
+    switch (api) {
+    case 0:
+        rc = sendmsg(fd, &msg, MSG_NOSIGNAL);
+        break;
+    case 1:
+        rc = write(fd, &byte, 1);
+        break;
+    case 2:
+        rc = writev(fd, &io, 1);
+        break;
+    case 3: {
+        int pipefd[2];
+        CHECK(pipe2(pipefd, O_CLOEXEC) == 0);
+        CHECK(write(pipefd[1], &byte, 1) == 1);
+        rc = splice(pipefd[0], NULL, fd, NULL, 1, 0);
+        saved = errno;
+        close(pipefd[0]);
+        close(pipefd[1]);
+        errno = saved;
+        break;
+    }
+    case 4: {
+        /* Read-only ELF is a regular-file source, not a tmpfs/config dependency. */
+        int source = open("/probe.bpf.o", O_RDONLY | O_CLOEXEC);
+        CHECK(source >= 0);
+        off_t offset = 0;
+        rc = sendfile(fd, source, &offset, 1);
+        saved = errno;
+        close(source);
+        errno = saved;
+        break;
+    }
+    default:
+        die("unknown transmission API");
+    }
+    if (allowed)
+        CHECK(rc == 1);
+    else
+        CHECK(rc == -1 && errno == EPERM);
+}
+
+static void alternate_paths(pid_t target)
+{
+    /* These are precise access/absence checks, NOT socket-hook denials. The
+     * known target is live, nondumpable, same UID, with the inherited FD 4. */
+    int pidfd = syscall(SYS_pidfd_open, target, 0);
+    CHECK(pidfd >= 0);
+    CHECK(syscall(SYS_pidfd_getfd, pidfd, 4, 0) == -1 && errno == EPERM);
+    close(pidfd);
+    char path[80];
+    snprintf(path, sizeof(path), "/proc/%d/fd/4", target);
+    CHECK(open(path, O_RDWR | O_CLOEXEC) == -1 && errno == EACCES);
+    snprintf(path, sizeof(path), "/proc/%d/fd/4", getpid());
+    CHECK(open(path, O_RDWR | O_CLOEXEC) == -1 && errno == ENXIO);
+    struct io_uring_params params = {0};
+    CHECK(syscall(SYS_io_uring_setup, 1, &params) == -1 && errno == ENOSYS);
+}
+
+static int lifecycle_tool(pid_t target)
+{
+    alarm(20);
+    check_unprivileged();
+    char command;
+    CHECK(write(3, "R", 1) == 1); /* nondumpable before parent starts probes */
+    while (read(3, &command, 1) == 1) {
+        if (command == 'X')
+            return 0;
+        if (command >= '0' && command <= '4') {
+            transmit(4, command - '0', true);
+        } else if (command >= 'A' && command <= 'E') {
+            transmit(4, command - 'A', false);
+        } else if (command == 'F') {
+            pid_t child = fork();
+            CHECK(child >= 0);
+            if (!child) {
+                CHECK(setsid() >= 0);
+                execl("/tool", "/tool", "--descendant", NULL);
+                die("exec descendant");
+            }
+            wait_ok(child);
+        } else if (command == 'P') {
+            alternate_paths(target);
+        } else {
+            die("unknown lifecycle command");
+        }
+        CHECK(write(3, "K", 1) == 1);
+    }
+    die("unexpected control EOF");
+    return 1;
+}
+
+/* Narrow exemptions: the caller supplies only control socketpair endpoints.
+ * Prove the family and type before assigning a supervisor-only storage value. */
+static void control_pair(int storage, int pair[2])
+{
+    CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, pair) == 0);
+    for (int i = 0; i < 2; i++) {
+        int domain = 0, type = 0;
+        socklen_t size = sizeof(int);
+        CHECK(getsockopt(pair[i], SOL_SOCKET, SO_DOMAIN, &domain, &size) == 0);
+        CHECK(domain == AF_UNIX);
+        CHECK(getsockopt(pair[i], SOL_SOCKET, SO_TYPE, &type, &size) == 0);
+        CHECK(type == SOCK_SEQPACKET);
+        struct socket_label label = { .infrastructure = 1 }, actual = {0};
+        CHECK(bpf_map_update_elem(storage, &pair[i], &label, BPF_NOEXIST) == 0);
+        CHECK(bpf_map_lookup_elem(storage, &pair[i], &actual) == 0);
+        CHECK(!memcmp(&actual, &label, sizeof(label)));
+    }
+}
+
+static void exact_counters(const char *phase)
+{
+    for (uint32_t key = 0; key < NCOUNTERS; key++) {
+        uint64_t value = 0;
+        CHECK(bpf_map_lookup_elem(witnesses, &key, &value) == 0);
+        if (value != expected[key]) {
+            dprintf(2, "ATTRIBUTION-PROBE:COUNTER:%s:%u actual=%llu expected=%llu\n",
+                    phase, key, (unsigned long long)value,
+                    (unsigned long long)expected[key]);
+            die("exact hook counters");
+        }
+    }
+}
+
+static pid_t launch_lifecycle(bool inside, int channel, int socketfd, pid_t target)
+{
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (!pid) {
+        put(inside ? INV "/cgroup.procs" : OTHER "/cgroup.procs", "0");
+        /* Use high temporary descriptors so dup2 cannot clobber either input. */
+        int control = fcntl(channel, F_DUPFD_CLOEXEC, 10);
+        int data = fcntl(socketfd, F_DUPFD_CLOEXEC, 10);
+        CHECK(control >= 0 && data >= 0);
+        CHECK(dup2(control, 3) == 3 && dup2(data, 4) == 4);
+        CHECK(syscall(SYS_close_range, 5, ~0U, 0) == 0);
+        unprivileged();
+        char pidarg[24];
+        snprintf(pidarg, sizeof(pidarg), "%d", target);
+        execl("/tool", "/tool", "--lifecycle", pidarg, NULL);
+        die("exec lifecycle tool");
+    }
+    return pid;
+}
+
+static void ready(int channel)
+{
+    char byte;
+    CHECK(read(channel, &byte, 1) == 1 && byte == 'R');
+    expected[INFRA_SEND]++;
+    exact_counters("tool-ready");
+}
+
+static void command(int channel, char byte, unsigned int allows, unsigned int denies)
+{
+    CHECK(write(channel, &byte, 1) == 1);
+    CHECK(read(channel, &byte, 1) == 1 && byte == 'K');
+    expected[INFRA_SEND] += 2;
+    expected[SEND_ALLOW] += allows;
+    expected[SEND_DENY] += denies;
+    exact_counters("command");
+}
+
+static void stop_tool(int channel, pid_t pid)
+{
+    CHECK(write(channel, "X", 1) == 1);
+    wait_ok(pid);
+    expected[INFRA_SEND]++;
+    exact_counters("tool-exit");
+    close(channel);
+}
+
+static void transmissions(int channel, int peer, bool allowed, const char *phase)
+{
+    static const char bytes[] = { 'M', 'W', 'V', 'P', '\177' };
+    static const char *apis[] = { "sendmsg", "write", "writev", "splice", "sendfile" };
+    for (int api = 0; api < 5; api++) {
+        command(channel, (allowed ? '0' : 'A') + api, allowed, !allowed);
+        char byte;
+        if (allowed) {
+            CHECK(read(peer, &byte, 1) == 1 && byte == bytes[api]);
+        } else {
+            CHECK(recv(peer, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+        }
+        dprintf(1, "ATTRIBUTION-PROBE:USE:%s:%s:%s\n",
+                phase, apis[api], allowed ? "allow" : "deny");
+    }
+}
+
+static int owned_connection(int family, int listener, int storage,
+                            uint64_t id, const struct admission *admission, int *peer)
+{
+    /* Trusted supervisor establishes the connection in the invocation, then
+     * returns to root. Inheritance bypasses SCM_RIGHTS entirely. Tools never
+     * get cgroup handles or privilege to perform this migration themselves. */
+    put(INV "/cgroup.procs", "0");
+    int socketfd = tcp(family, false, true);
+    put(CG "/cgroup.procs", "0");
+    *peer = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+    CHECK(*peer >= 0);
+    struct socket_label label = {0};
+    CHECK(bpf_map_lookup_elem(storage, &socketfd, &label) == 0);
+    CHECK(label.cgroup == id && label.label == admission->label &&
+          label.generation == admission->generation && !label.infrastructure);
+    expected[family == AF_INET ? CONNECT4 : CONNECT6]++;
+    expected[SNAPSHOT]++;
+    exact_counters("owned-connection");
+    return socketfd;
+}
+
+static void lifecycle(int family, int listener, int map, int storage, uint64_t id)
+{
+    struct admission admission = {
+        .label = 42, .generation = family == AF_INET ? 2 : 4, .active = 1,
+    };
+    CHECK(bpf_map_update_elem(map, &id, &admission, BPF_ANY) == 0);
+    struct stat other_st;
+    CHECK(stat(OTHER, &other_st) == 0 && other_st.st_uid == 0 &&
+          (other_st.st_mode & 0777) == 0700);
+    uint64_t other_id = other_st.st_ino;
+    CHECK(other_id && other_id != id);
+    struct admission other_admission = {
+        .label = 43, .generation = admission.generation, .active = 1,
+    };
+    CHECK(bpf_map_update_elem(map, &other_id, &other_admission, BPF_ANY) == 0);
+    int peer, socketfd = owned_connection(family, listener, storage, id, &admission, &peer);
+    int pair[2];
+    control_pair(storage, pair);
+    pid_t inside = launch_lifecycle(true, pair[1], socketfd, 0);
+    close(pair[1]);
+    ready(pair[0]);
+    transmissions(pair[0], peer, true, "active");
+    command(pair[0], 'F', 5, 0);
+    const char bytes[] = { 'M', 'W', 'V', 'P', '\177' };
+    for (int i = 0; i < 5; i++) {
+        char byte;
+        CHECK(read(peer, &byte, 1) == 1 && byte == bytes[i]);
+    }
+    dprintf(1, "ATTRIBUTION-PROBE:INHERIT:fork-exec-setsid:allow\n");
+    int other[2];
+    control_pair(storage, other);
+    pid_t outside = launch_lifecycle(false, other[1], socketfd, inside);
+    close(other[1]);
+    ready(other[0]);
+    transmissions(other[0], peer, false, "cross-cgroup-inherited");
+    command(other[0], 'P', 0, 0);
+    dprintf(1, "ATTRIBUTION-PROBE:ALTERNATE:pidfd-EPERM,procfd-EACCES,self-procfd-ENXIO,io_uring-ENOSYS\n");
+    stop_tool(other[0], outside);
+    /* The peer and both copies of the established TCP socket remain open. */
+    admission.active = 0;
+    CHECK(bpf_map_update_elem(map, &id, &admission, BPF_ANY) == 0);
+    transmissions(pair[0], peer, false, "retired");
+    admission.active = 1;
+    admission.generation++;
+    CHECK(bpf_map_update_elem(map, &id, &admission, BPF_ANY) == 0);
+    transmissions(pair[0], peer, false, "replaced-generation");
+    stop_tool(pair[0], inside);
+    close(socketfd);
+    close(peer);
+    /* Generation replacement is not a global outage: a new socket can send. */
+    socketfd = owned_connection(family, listener, storage, id, &admission, &peer);
+    control_pair(storage, pair);
+    inside = launch_lifecycle(true, pair[1], socketfd, 0);
+    close(pair[1]);
+    ready(pair[0]);
+    transmissions(pair[0], peer, true, "new-generation");
+    stop_tool(pair[0], inside);
+    close(socketfd);
+    close(peer);
+    CHECK(bpf_map_delete_elem(map, &other_id) == 0);
+}
+
 static pid_t launch(bool join_invocation, bool admitted, int channel)
 {
     pid_t pid = fork();
@@ -246,6 +545,16 @@ static void negative_loader_checks(void)
 int main(int argc, char **argv)
 {
     signal(SIGALRM, deadline);
+    signal(SIGPIPE, SIG_IGN);
+    if (argc == 3 && !strcmp(argv[1], "--lifecycle"))
+        return lifecycle_tool(atoi(argv[2]));
+    if (argc == 2 && !strcmp(argv[1], "--descendant")) {
+        alarm(20);
+        check_unprivileged();
+        for (int api = 0; api < 5; api++)
+            transmit(4, api, true);
+        return 0;
+    }
     if (argc == 4 && !strcmp(argv[1], "--tool"))
         return tool(!strcmp(argv[2], "yes"), atoi(argv[3]));
     CHECK(getpid() == 1);
@@ -254,6 +563,7 @@ int main(int argc, char **argv)
     CHECK(mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == 0);
     CHECK(mount("cgroup2", CG, "cgroup2", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == 0);
     CHECK(mkdir(INV, 0700) == 0);
+    CHECK(mkdir(OTHER, 0700) == 0);
     /* SECURITYFS is deliberately off in the inherited kernel config. The
      * 6.12 LSM syscall lists active modules without that filesystem. */
     uint64_t lsms[16] = {0};
@@ -291,19 +601,23 @@ int main(int argc, char **argv)
     struct bpf_link *v4 = attach(obj, "connect4", cg);
     struct bpf_link *v6 = attach(obj, "connect6", cg);
     struct bpf_link *receive = attach(obj, "receive", -1);
+    struct bpf_link *label = attach(obj, "label_connect", -1);
+    struct bpf_link *use = attach(obj, "use_socket", -1);
     int map = bpf_object__find_map_fd_by_name(obj, "invocation");
-    CHECK(map >= 0);
+    int storage = bpf_object__find_map_fd_by_name(obj, "socket_labels");
+    witnesses = bpf_object__find_map_fd_by_name(obj, "witnessed");
+    CHECK(map >= 0 && storage >= 0 && witnesses >= 0);
     int listen4 = tcp(AF_INET, true, true);
     int listen6 = tcp(AF_INET6, true, true);
     /* A zero/absent admission is fail-closed before any authorized workload. */
     wait_ok(launch(false, false, -1));
     struct stat st;
     CHECK(stat(INV, &st) == 0 && st.st_uid == 0 && (st.st_mode & 0777) == 0700);
-    uint32_t key = 0;
     uint64_t id = st.st_ino;
-    CHECK(id != 0 && bpf_map_update_elem(map, &key, &id, BPF_ANY) == 0);
+    struct admission admission = { .label = 42, .generation = 1, .active = 1 };
+    CHECK(id != 0 && bpf_map_update_elem(map, &id, &admission, BPF_ANY) == 0);
     int pair[2];
-    CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, pair) == 0);
+    control_pair(storage, pair);
     pid_t outside = launch(false, false, pair[0]);
     pid_t inside = launch(true, true, pair[1]);
     close(pair[0]);
@@ -319,26 +633,28 @@ int main(int argc, char **argv)
         CHECK(fd >= 0);
         close(fd);
     }
-    id = 0;
-    CHECK(bpf_map_update_elem(map, &key, &id, BPF_ANY) == 0);
+    const uint64_t initial[] = { 2, 2, 2, 2, 2, 4, 0, 0, 2 };
+    memcpy(expected, initial, sizeof(expected));
+    exact_counters("connect-and-SCM");
+    lifecycle(AF_INET, listen4, map, storage, id);
+    lifecycle(AF_INET6, listen6, map, storage, id);
+    CHECK(bpf_map_delete_elem(map, &id) == 0);
     CHECK(rmdir(INV) == 0);
     CHECK(mkdir(INV, 0700) == 0);
-    /* The reused path remains unadmitted. Full concurrent lifetime/reuse and
-     * already-connected socket use are intentionally NOT covered. */
+    /* Path reuse is not kernel cgroup-ID wraparound or concurrent teardown. */
     wait_ok(launch(true, false, -1));
-    int witnesses = bpf_object__find_map_fd_by_name(obj, "witnessed");
-    CHECK(witnesses >= 0);
-    const uint64_t minimum[] = { 2, 2, 2, 3, 3 };
-    for (key = 0; key < 5; key++) {
-        uint64_t value = 0;
-        CHECK(bpf_map_lookup_elem(witnesses, &key, &value) == 0);
-        CHECK(value >= minimum[key]);
+    expected[CONNECT4_DENY]++;
+    expected[CONNECT6_DENY]++;
+    exact_counters("recreated-cgroup");
+    for (uint32_t key = 0; key < NCOUNTERS; key++) {
         dprintf(1, "ATTRIBUTION-PROBE:WITNESS:%u=%llu\n",
-                key, (unsigned long long)value);
+                key, (unsigned long long)expected[key]);
     }
     dprintf(1, "ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial\n");
-    dprintf(1, "ATTRIBUTION-PROBE:UNSUPPORTED:socket-use-lifecycle,claim-protocol,verifier-faults,exec-identity\n");
-    (void)v4; (void)v6; (void)receive; /* Links kept live until guest shutdown. */
+    dprintf(1, "ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial\n");
+    dprintf(1, "ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,verifier-faults,exec-identity,concurrent-teardown,non-TCP\n");
+    (void)v4; (void)v6; (void)receive; (void)label; (void)use;
+    /* Links kept live until guest shutdown. */
     sync();
     reboot(RB_POWER_OFF);
     die("poweroff");

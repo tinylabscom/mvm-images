@@ -1,20 +1,42 @@
-# Partial native hook viability probe — not production semantics
+# Partial native TCP lifecycle probe — not production semantics
 
-This image-owned development guest tests the actual connect4/connect6 verifier,
-attach path and BPF LSM `file_receive` hook on the experimental Linux 6.12.111
-kernel. It is not PS13 completion and **must not be integrated into production**
-on the strength of a partial-pass marker. No `mvm` checkout, binary, runtime,
-overlay, manifest or image lock participates. No production recipe changes.
+This image-owned development guest extends the connect4/connect6 and
+`file_receive` partial pass from [run 37987291610](https://github.com/tinylabscom/mvm-images/actions/runs/37987291610)
+at `305fb49` with socket-label generation and actual-use/revocation gates on
+experimental Linux **6.12.111**. The earlier run does **not** establish these
+new gates. It is not PS13 completion and **must not be integrated into
+production** on the strength of a partial-pass marker. No `mvm` checkout,
+binary, runtime, overlay, manifest or image lock participates. No production
+recipe, kernel configuration, output, NIC or vsock changes.
 
 ## Deliberately restrictive policy
 
-The trusted PID 1 creates a root-owned, mode 0700, nondelegated invocation
-cgroup. Before any uid-1000 tool starts, it irreversibly sets and reads back
+The trusted PID 1 creates root-owned, mode 0700, nondelegated invocation
+cgroups. Before any uid-1000 tool starts, it irreversibly sets and reads back
 `kernel.unprivileged_bpf_disabled=1`, loads the BPF object, attaches both connect
-programs at the cgroup root, and attaches the LSM program. The map initially
-contains zero (deny); admission then selects one kernel cgroup ID, never a PID
-or a process-inspection result. Only that exact cgroup may connect. Descendant
-processes inherit its membership; nested/delegated cgroups are not supported.
+programs at the cgroup root, and attaches all three LSM programs. The admission
+hash map is initially empty (deny). Its key is the kernel cgroup ID and its
+value is `{label, generation, active}`; no process scan establishes identity.
+Only an active exact cgroup may connect. Descendants inherit membership;
+nested/delegated cgroups are not supported.
+
+Non-sleepable `socket_connect` creates a `BPF_MAP_TYPE_SK_STORAGE` snapshot
+`{cgroup, label, generation, infrastructure=0}`. Repeated connect cannot replace
+an existing label; it must match the current generation. Sleepable-capable
+`socket_sendmsg` allows only the same current cgroup with an active matching
+label and generation. Removing admission, retiring it, or replacing its
+generation makes the existing snapshot unusable without walking sockets or
+holders. Storage follows the socket lifetime; this probe does not manually
+delete and recreate a label to simulate revocation.
+
+The only send exemption is an explicit storage flag assigned by trusted PID 1
+to predetermined **AF_UNIX/SOCK_SEQPACKET control socketpair endpoints**. PID 1
+checks their domain/type and reads back storage after registration. There is
+no UID, root-cgroup, AF_UNIX-wide or INET-wide exemption. Every tested TCP socket
+must have a connect-created non-infrastructure label, also read back. All BPF,
+map, link, listener and cgroup FDs are closed before tool exec; a lifecycle tool
+inherits only standard streams, control FD 3 and the deliberately tested TCP
+FD 4. These control sockets are probe infrastructure, not a product transport.
 
 **Every socket received through `file_receive` is refused, including same-
 invocation transfers.** This is a deliberately over-restrictive viability policy,
@@ -22,8 +44,10 @@ not approved final FD-transfer semantics. Non-socket file transfers are not
 tested. The program uses CO-RE `file.f_inode.i_mode` and rejects unreadable mode;
 it does not guess offsets or cast a `struct file` into a BPF socket. Invocation
 identity comes from `bpf_get_current_cgroup_id`, not procfs. A map of counters
-must witness actual allowed/denied connect hooks and socket-specific LSM denies:
-an attach success or a denial caused by an unrelated error cannot pass alone.
+must witness actual allowed/denied connect hooks and socket-specific LSM denies.
+Every scenario checks all counters for **exact equality**, not lower bounds.
+Each transmission requires exactly one allow/deny send hook, plus two control
+sends, and zero other hook changes. EPERM alone cannot count as hook evidence.
 
 ## Executed scenarios if the guest passes
 
@@ -35,12 +59,39 @@ an attach success or a denial caused by an unrelated error cannot pass alone.
   separate outside-cgroup uid-1000 tool. Linux must deliver payload but truncate
   ancillary rights (`MSG_CTRUNC`, no FD). The LSM socket-denial counter must
   increment twice.
+* For **both IPv4 and IPv6**, each of `sendmsg`, `write`, `writev`, pipe-to-socket
+  `splice`, and regular-file-to-socket `sendfile` sends exactly one witnessed
+  byte while its generation is active. `sendfile` reads the first ELF byte of
+  the read-only `/probe.bpf.o`; it needs no writable filesystem or new config.
+* A same-invocation fork/`setsid`/exec descendant of `/tool` uses the inherited
+  TCP socket successfully through all five APIs. The descendant repeats the
+  sealed-executable/nondumpable/capability checks.
+* Trusted PID 1 first connects from inside the admitted cgroup, returns to the
+  root cgroup, then hands the same socket through **fork/exec inheritance** to
+  both an inside and an outside tool. Each outside-cgroup API must return
+  EPERM, increment exactly one send-deny counter, leave SCM-deny unchanged and
+  deliver no peer data. The outside tool occupies a second sealed **active**
+  invocation with a different label, not just an unadmitted cgroup. This misuse
+  does not depend on SCM_RIGHTS being blocked.
+* With the inside tool and TCP peer still alive, PID 1 sets admission inactive,
+  then commands each API separately: all must be hook-denied. It then activates
+  a newer generation with the same label: each API on the old socket remains
+  denied. A new connection in that generation succeeds through all five APIs.
+  Control acknowledgments delimit each map transition; no concurrent teardown
+  or in-flight-send guarantee is inferred.
 * Every tool is separately executed from the sealed, root-owned **0551** file
   `/tool`, checks that reading that file fails, sets and verifies nondumpable,
   and checks zero effective, permitted, inheritable, bounding and ambient
   capabilities. Admission still works through the kernel cgroup helper.
-* Unprivileged BPF map creation returns EPERM. Opening either root or invocation
-  `cgroup.procs` for writing returns EACCES; no cgroup delegation is performed.
+* Unprivileged BPF map creation returns EPERM. Opening root or either invocation
+  `cgroup.procs` for writing returns EACCES, preventing migration through those
+  paths; no cgroup delegation is performed.
+* Against the known live, nondumpable same-UID sibling, `pidfd_open` succeeds
+  but `pidfd_getfd` returns EPERM and opening its exact `/proc/<pid>/fd/4` path
+  returns EACCES. Reopening one's own socket through that path returns ENXIO.
+  There is no holder scan. `io_uring_setup` must return ENOSYS (the experimental
+  kernel disables it). These are **access-control/absence witnesses, not LSM
+  socket-denial claims**, and all non-control hook counters must stay unchanged.
 * After children exit, admission is cleared, the cgroup is removed and the same
   path recreated. A fresh process inside the recreated cgroup cannot connect.
   This does not simulate a kernel cgroup-ID wraparound.
@@ -50,8 +101,22 @@ an attach success or a denial caused by an unrelated error cannot pass alone.
 
 The main watchdog is 60 seconds; each executed tool has a 20-second watchdog.
 PID 1 failures exit/panic and emit `ATTRIBUTION-PROBE:FAIL:...` with errno.
-The host enforces an independent timeout and requires a clean VMM exit and both
-exact PASS/UNSUPPORTED markers. Diagnostics and verifier messages remain in the
+The host enforces an independent timeout and requires a clean VMM exit and all
+three exact markers (the earlier PASS is preserved):
+
+```text
+ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial
+ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial
+ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,verifier-faults,exec-identity,concurrent-teardown,non-TCP
+```
+
+Final counter totals are: allowed connect4/connect6 **4/4**, socket receive
+denies **2**, denied connect4/connect6 **3/3**, socket snapshots **8**, allowed
+TCP sends **30**, denied TCP sends **30**, explicit infrastructure sends **122**.
+The per-command checks are stronger than these totals: a missing denial on one
+API cannot be hidden by extra hook calls on another.
+
+Diagnostics and verifier messages remain in the
 serial log. An unavailable BTF, syscall, helper, verifier operation, attach type
 or hook is a failing result to investigate, not a skip or fallback.
 
@@ -67,17 +132,32 @@ takes `u64 *ids`, `u32 *size` (bytes), flags zero, returning the number of IDs.
 `LSM_ID_BPF` is 109 in the matching UAPI. The pinned Nix Linux headers supply
 both architectures' syscall numbers; there is no hardcoded fallback.
 
-The unresolved runtime gates are BPF socket-address helper availability,
-CO-RE relocation against the built kernel BTF, the LSM trampoline signature,
-verifier acceptance, attach permission, exact SCM detachment behavior, and
-cgroup identity matching. Compilation and static tests do not establish them.
+`socket_connect` is non-sleepable on this kernel; declaring it `lsm.s` would be
+invalid. `socket_sendmsg` and `file_receive` are sleepable-capable. The new
+programs use direct CO-RE `socket->sk` loads, rather than pretending a scalar
+pointer from `bpf_probe_read_kernel` is a verifier-typed socket. **Verifier
+acceptance of these typed sock arguments to `bpf_sk_storage_get` must be proved
+by the real kernel load**, not assumed from helper availability. Userspace
+FD-keyed SK_STORAGE registration/readback is another mandatory runtime gate.
+
+Other gates include both-architecture CO-RE relocation, new LSM trampoline
+attachment, each syscall actually reaching `socket_sendmsg`, exact hook counts,
+and alternate-path errno/absence. Any unsupported operation or unexpected
+error fails the probe; there is no skip/fallback. Compilation and static
+Python source checks establish none of these runtime properties.
 
 ## Explicitly unsupported, even after partial PASS
 
-* Lifetime-bound socket ownership and revocation of already-connected sockets;
-  additional socket-use hooks; cross-invocation reuse under concurrent teardown.
-* FD inheritance policy, ptrace/pidfd avenues, established socket use after
-  revocation, socket cloning, UDP, or transports other than this TCP probe.
+* Concurrent teardown/in-flight syscall races, cgroup-ID wraparound, generation
+  wraparound, socket cloning and accepted-socket ownership policy. The bounded
+  TCP inheritance fixture is not a complete production FD inheritance policy.
+* ptrace attacks beyond the tested nondumpable sibling access checks, enabled
+  io_uring, non-socket SCM transfers, UDP, and transports other than this TCP
+  loopback probe. Socket receive remains blanket-denied even within invocation.
+* **Production EGRESS BRIDGE remains open.** The preferred next separate
+  experiment is a private per-invocation **loopback proxy listener plus
+  cgroup-connect redirect**, not a new AF_UNIX product transport. No production
+  proxy, redirect, connector or runtime coupling is implemented here.
 * Claim protocol, an authenticated connector, external networking, and actual
   executable identity/content inspection. The 0551/nondumpable test establishes
   **cgroup observability**, not executable attestation.
