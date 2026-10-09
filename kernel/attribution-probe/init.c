@@ -44,7 +44,8 @@ struct socket_label {
     uint64_t cgroup, label, generation, infrastructure;
 };
 enum { CONNECT4, CONNECT6, RECEIVE_DENY, CONNECT4_DENY, CONNECT6_DENY,
-       SNAPSHOT, SEND_ALLOW, SEND_DENY, INFRA_SEND, NCOUNTERS };
+       SNAPSHOT, SEND_ALLOW, SEND_DENY, INFRA_SEND,
+       PRIVATE4_DENY, PRIVATE6_DENY, REDIRECT4, REDIRECT6, NCOUNTERS };
 static int witnesses;
 static uint64_t expected[NCOUNTERS];
 
@@ -542,10 +543,16 @@ static void negative_loader_checks(void)
     /* These test parser refusal only, not verifier rejection/fault injection. */
 }
 
+#include "bridge.c"
+
 int main(int argc, char **argv)
 {
     signal(SIGALRM, deadline);
     signal(SIGPIPE, SIG_IGN);
+    if (argc >= 2 && !strcmp(argv[1], "--bridge-egress"))
+        return bridge_egress();
+    if (argc == 4 && !strcmp(argv[1], "--bridge-tool"))
+        return bridge_tool(atoi(argv[2]), atoi(argv[3]));
     if (argc == 3 && !strcmp(argv[1], "--lifecycle"))
         return lifecycle_tool(atoi(argv[2]));
     if (argc == 2 && !strcmp(argv[1], "--descendant")) {
@@ -593,13 +600,14 @@ int main(int argc, char **argv)
     CHECK(ioctl(fd, SIOCSIFFLAGS, &lo) == 0);
     close(fd);
     negative_loader_checks();
+    capability_viability();
     struct bpf_object *obj = bpf_object__open_file("/probe.bpf.o", NULL);
     CHECK(obj != NULL && !libbpf_get_error(obj));
     CHECK(bpf_object__load(obj) == 0); /* Preserve libbpf/verifier stderr. */
     int cg = open(CG, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     CHECK(cg >= 0);
-    struct bpf_link *v4 = attach(obj, "connect4", cg);
-    struct bpf_link *v6 = attach(obj, "connect6", cg);
+    int v4 = root_guard(obj, "connect4", cg, BPF_CGROUP_INET4_CONNECT);
+    int v6 = root_guard(obj, "connect6", cg, BPF_CGROUP_INET6_CONNECT);
     struct bpf_link *receive = attach(obj, "receive", -1);
     struct bpf_link *label = attach(obj, "label_connect", -1);
     struct bpf_link *use = attach(obj, "use_socket", -1);
@@ -633,7 +641,7 @@ int main(int argc, char **argv)
         CHECK(fd >= 0);
         close(fd);
     }
-    const uint64_t initial[] = { 2, 2, 2, 2, 2, 4, 0, 0, 2 };
+    const uint64_t initial[NCOUNTERS] = { 2, 2, 2, 2, 2, 4, 0, 0, 2 };
     memcpy(expected, initial, sizeof(expected));
     exact_counters("connect-and-SCM");
     lifecycle(AF_INET, listen4, map, storage, id);
@@ -646,6 +654,7 @@ int main(int argc, char **argv)
     expected[CONNECT4_DENY]++;
     expected[CONNECT6_DENY]++;
     exact_counters("recreated-cgroup");
+    bridge_probe(obj, map, storage);
     for (uint32_t key = 0; key < NCOUNTERS; key++) {
         dprintf(1, "ATTRIBUTION-PROBE:WITNESS:%u=%llu\n",
                 key, (unsigned long long)expected[key]);

@@ -3,6 +3,9 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
+#include <linux/in.h>
+#include <linux/in6.h>
 
 struct inode {
     unsigned short i_mode;
@@ -10,8 +13,13 @@ struct inode {
 struct file {
     struct inode *f_inode;
 } __attribute__((preserve_access_index));
+struct sock_common {
+    __u16 skc_family, skc_dport;
+    __u32 skc_daddr;
+    struct in6_addr skc_v6_daddr;
+} __attribute__((preserve_access_index));
 struct sock {
-    int unused;
+    struct sock_common __sk_common;
 } __attribute__((preserve_access_index));
 struct socket {
     struct sock *sk;
@@ -40,11 +48,20 @@ struct {
     __type(value, struct socket_label);
 } socket_labels SEC(".maps");
 
+struct bridge_slot {
+    __u32 port, active;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_CGROUP_STORAGE);
+    __type(key, struct bpf_cgroup_storage_key);
+    __type(value, struct bridge_slot);
+} bridge_slots SEC(".maps");
+
 /* 0/1 allowed connect; 2 refused receive; 3/4 denied connect;
  * 5 snapshot creation; 6 allowed send; 7 denied send; 8 infrastructure send. */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 9);
+    __uint(max_entries, 13);
     __type(key, __u32);
     __type(value, __u64);
 } witnessed SEC(".maps");
@@ -63,9 +80,32 @@ static __always_inline struct admission *current_admission(void)
     return a && a->active && a->label && a->generation ? a : 0;
 }
 
+static __always_inline int normal_destination(struct sock *sk)
+{
+    if (sk->__sk_common.skc_dport != bpf_htons(1080))
+        return 0;
+    if (sk->__sk_common.skc_family == 2)
+        return sk->__sk_common.skc_daddr == bpf_htonl(0x7f000001);
+    if (sk->__sk_common.skc_family == 10) {
+        struct in6_addr addr = BPF_CORE_READ(sk, __sk_common.skc_v6_daddr);
+        return !addr.s6_addr32[0] && !addr.s6_addr32[1] && !addr.s6_addr32[2] &&
+               addr.s6_addr32[3] == bpf_htonl(1);
+    }
+    return 0;
+}
+
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
 {
+    if (ctx->user_port == bpf_htons(900) || ctx->user_port == bpf_htons(901)) {
+        count(9);
+        return 0;
+    }
+    if (ctx->user_ip4 == bpf_htonl(0x7f000001) &&
+        ctx->user_port == bpf_htons(1080)) {
+        count(0);
+        return 1; /* Unbound normal endpoint remains ordinary ECONNREFUSED. */
+    }
     int allow = current_admission() != 0;
     count(allow ? 0 : 3);
     return allow;
@@ -74,9 +114,46 @@ int connect4(struct bpf_sock_addr *ctx)
 SEC("cgroup/connect6")
 int connect6(struct bpf_sock_addr *ctx)
 {
+    if (ctx->user_port == bpf_htons(900) || ctx->user_port == bpf_htons(901)) {
+        count(10);
+        return 0;
+    }
+    if (!ctx->user_ip6[0] && !ctx->user_ip6[1] && !ctx->user_ip6[2] &&
+        ctx->user_ip6[3] == bpf_htonl(1) && ctx->user_port == bpf_htons(1080)) {
+        count(1);
+        return 1;
+    }
     int allow = current_admission() != 0;
     count(allow ? 1 : 4);
     return allow;
+}
+
+/* Root guards are explicitly attached PREORDER. A sticky root denial must
+ * never be reset here. Local storage belongs to the program's attachment,
+ * not the current process: inherited leaf programs select the same slot. */
+SEC("cgroup/connect4")
+int bridge4(struct bpf_sock_addr *ctx)
+{
+    struct bridge_slot *slot = bpf_get_local_storage(&bridge_slots, 0);
+    if (slot->active && (slot->port == 900 || slot->port == 901) &&
+        ctx->user_ip4 == bpf_htonl(0x7f000001) && ctx->user_port == bpf_htons(1080)) {
+        ctx->user_port = bpf_htons(slot->port);
+        count(11);
+    }
+    return 1;
+}
+
+SEC("cgroup/connect6")
+int bridge6(struct bpf_sock_addr *ctx)
+{
+    struct bridge_slot *slot = bpf_get_local_storage(&bridge_slots, 0);
+    if (slot->active && (slot->port == 900 || slot->port == 901) &&
+        !ctx->user_ip6[0] && !ctx->user_ip6[1] && !ctx->user_ip6[2] &&
+        ctx->user_ip6[3] == bpf_htonl(1) && ctx->user_port == bpf_htons(1080)) {
+        ctx->user_port = bpf_htons(slot->port);
+        count(12);
+    }
+    return 1;
 }
 
 /* socket_connect is NOT sleepable on Linux 6.12. Direct CO-RE loads preserve
@@ -90,8 +167,39 @@ int BPF_PROG(label_connect, struct socket *socket, struct sockaddr *address,
         return ret;
     struct admission *a = current_admission();
     /* The connect4/6 programs witness unadmitted INET connect denials. */
-    if (!a)
+    if (!a) {
+        __u64 id = bpf_get_current_cgroup_id();
+        /* An inactive/retired scoped admission is not ordinary unbound. */
+        if (bpf_map_lookup_elem(&invocation, &id))
+            return 0;
+        struct sockaddr_in addr4 = {};
+        struct sockaddr_in6 addr6 = {};
+        int normal = 0;
+        if (address_len == sizeof(addr4) &&
+            !bpf_probe_read_kernel(&addr4, sizeof(addr4), address))
+            normal = addr4.sin_family == 2 && addr4.sin_port == bpf_htons(1080) &&
+                     addr4.sin_addr.s_addr == bpf_htonl(0x7f000001);
+        else if (address_len == sizeof(addr6) &&
+                 !bpf_probe_read_kernel(&addr6, sizeof(addr6), address))
+            normal = addr6.sin6_family == 10 && addr6.sin6_port == bpf_htons(1080) &&
+                     !addr6.sin6_addr.s6_addr32[0] && !addr6.sin6_addr.s6_addr32[1] &&
+                     !addr6.sin6_addr.s6_addr32[2] &&
+                     addr6.sin6_addr.s6_addr32[3] == bpf_htonl(1);
+        if (!normal)
+            return 0;
+        struct sock *sk = socket->sk;
+        if (!sk)
+            return -1;
+        struct socket_label *old = bpf_sk_storage_get(&socket_labels, sk, 0, 0);
+        if (old)
+            return old->cgroup == id && !old->label && !old->generation &&
+                   !old->infrastructure ? 0 : -1;
+        struct socket_label unbound = { .cgroup = id };
+        if (!bpf_sk_storage_get(&socket_labels, sk, &unbound, BPF_SK_STORAGE_GET_F_CREATE))
+            return -1;
+        count(5);
         return 0;
+    }
     struct sock *sk = socket->sk;
     if (!sk)
         return -1;
@@ -129,6 +237,13 @@ int BPF_PROG(use_socket, struct socket *socket, struct msghdr *msg,
         return 0;
     }
     struct admission *a = current_admission();
+    __u64 id = bpf_get_current_cgroup_id();
+    if (s && !s->label && !s->generation && !s->infrastructure &&
+        s->cgroup == id && !bpf_map_lookup_elem(&invocation, &id) &&
+        normal_destination(sk)) {
+        count(6);
+        return 0;
+    }
     if (s && a && s->cgroup == bpf_get_current_cgroup_id() &&
         s->label == a->label && s->generation == a->generation) {
         count(6);

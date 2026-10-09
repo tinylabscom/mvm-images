@@ -10,6 +10,13 @@ import sys
 
 PASS = "ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial"
 LIFECYCLE_PASS = "ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial"
+BRIDGE_PASS = "ATTRIBUTION-PROBE:PASS:egress-label-bridge-development-only"
+BRIDGE_CAPACITY = "ATTRIBUTION-PROBE:CAPACITY:2:boot-local-tombstones:no-reuse:exhaustion-closed"
+BOOTSTRAP_CAPS = "ATTRIBUTION-PROBE:BOOTSTRAP-CAPS:NET_ADMIN12,PERFMON38,BPF39:no-SYS_ADMIN"
+BRIDGE_UNSUPPORTED = (
+    "ATTRIBUTION-PROBE:UNSUPPORTED:production-slot-reuse,host-FlowMux,"
+    "exec-identity,snapshot-restore,production-loader"
+)
 UNSUPPORTED = (
     "ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,"
     "verifier-faults,exec-identity,concurrent-teardown,non-TCP"
@@ -39,7 +46,9 @@ def validate_output(output: str, returncode: int) -> None:
     lines = output.replace("\r", "").splitlines()
     if returncode != 0 or "ATTRIBUTION-PROBE:FAIL:" in output:
         raise ValueError(f"guest/VMM failed (exit {returncode})")
-    if any(lines.count(marker) != 1 for marker in (PASS, LIFECYCLE_PASS, UNSUPPORTED)):
+    markers = (PASS, LIFECYCLE_PASS, BRIDGE_PASS, BRIDGE_CAPACITY,
+               BOOTSTRAP_CAPS, BRIDGE_UNSUPPORTED, UNSUPPORTED)
+    if any(lines.count(marker) != 1 for marker in markers):
         raise ValueError("missing/duplicate exact partial-success and unsupported markers")
 
 

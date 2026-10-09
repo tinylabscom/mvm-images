@@ -1,10 +1,13 @@
-# Partial native TCP lifecycle probe — not production semantics
+# Development TCP lifecycle and egress-label bridge — not production semantics
 
 This image-owned development guest extends the connect4/connect6 and
 `file_receive` partial pass from [run 37987291610](https://github.com/tinylabscom/mvm-images/actions/runs/37987291610)
 at `305fb49` with socket-label generation and actual-use/revocation gates on
 experimental Linux **6.12.111**. The earlier run does **not** establish these
-new gates. It is not PS13 completion and **must not be integrated into
+new gates. The lifecycle extension at `536e20c` subsequently passed both
+architectures in [run 37992460204](https://github.com/tinylabscom/mvm-images/actions/runs/37992460204).
+That run does **not** establish the bridge gates added here. It is not PS13
+completion and **must not be integrated into
 production** on the strength of a partial-pass marker. No `mvm` checkout,
 binary, runtime, overlay, manifest or image lock participates. No production
 recipe, kernel configuration, output, NIC or vsock changes.
@@ -17,8 +20,10 @@ cgroups. Before any uid-1000 tool starts, it irreversibly sets and reads back
 programs at the cgroup root, and attaches all three LSM programs. The admission
 hash map is initially empty (deny). Its key is the kernel cgroup ID and its
 value is `{label, generation, active}`; no process scan establishes identity.
-Only an active exact cgroup may connect. Descendants inherit membership;
-nested/delegated cgroups are not supported.
+Only an active exact cgroup may connect to the lifecycle endpoint. The bridge
+also allows the normal loopback port 1080 without admission; its narrow
+unbound SEND rule is described below. Descendants inherit process membership;
+nested/delegated invocation cgroups are not supported.
 
 Non-sleepable `socket_connect` creates a `BPF_MAP_TYPE_SK_STORAGE` snapshot
 `{cgroup, label, generation, infrastructure=0}`. Repeated connect cannot replace
@@ -29,7 +34,7 @@ generation makes the existing snapshot unusable without walking sockets or
 holders. Storage follows the socket lifetime; this probe does not manually
 delete and recreate a label to simulate revocation.
 
-The only send exemption is an explicit storage flag assigned by trusted PID 1
+The only infrastructure send exemption is an explicit storage flag assigned by trusted PID 1
 to predetermined **AF_UNIX/SOCK_SEQPACKET control socketpair endpoints**. PID 1
 checks their domain/type and reads back storage after registration. There is
 no UID, root-cgroup, AF_UNIX-wide or INET-wide exemption. Every tested TCP socket
@@ -102,17 +107,25 @@ sends, and zero other hook changes. EPERM alone cannot count as hook evidence.
 The main watchdog is 60 seconds; each executed tool has a 20-second watchdog.
 PID 1 failures exit/panic and emit `ATTRIBUTION-PROBE:FAIL:...` with errno.
 The host enforces an independent timeout and requires a clean VMM exit and all
-three exact markers (the earlier PASS is preserved):
+seven exact markers (the earlier PASS markers are preserved):
 
 ```text
 ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial
 ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial
+ATTRIBUTION-PROBE:PASS:egress-label-bridge-development-only
+ATTRIBUTION-PROBE:CAPACITY:2:boot-local-tombstones:no-reuse:exhaustion-closed
+ATTRIBUTION-PROBE:BOOTSTRAP-CAPS:NET_ADMIN12,PERFMON38,BPF39:no-SYS_ADMIN
+ATTRIBUTION-PROBE:UNSUPPORTED:production-slot-reuse,host-FlowMux,exec-identity,snapshot-restore,production-loader
 ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,verifier-faults,exec-identity,concurrent-teardown,non-TCP
 ```
 
-Final counter totals are: allowed connect4/connect6 **4/4**, socket receive
-denies **2**, denied connect4/connect6 **3/3**, socket snapshots **8**, allowed
-TCP sends **30**, denied TCP sends **30**, explicit infrastructure sends **122**.
+The preserved lifecycle phase totals are: allowed connect4/connect6 **4/4**,
+socket receive denies **2**, denied connect4/connect6 **3/3**, socket snapshots
+**8**, allowed TCP sends **30**, denied TCP sends **30**, explicit infrastructure
+sends **122**. With the bridge fixtures, expected final totals are allowed
+connect4/connect6 **10/9**, receive denies **2**, ordinary connect denials **3/3**,
+snapshots **27**, allowed sends **39**, denied sends **30**, infrastructure sends
+**158**, private-port denials **12/12**, redirects **4/3** (counter keys 9–12).
 The per-command checks are stronger than these totals: a missing denial on one
 API cannot be hidden by extra hook calls on another.
 
@@ -146,6 +159,79 @@ and alternate-path errno/absence. Any unsupported operation or unexpected
 error fails the probe; there is no skip/fallback. Compilation and static
 Python source checks establish none of these runtime properties.
 
+## Bounded development-only egress bridge
+
+`bridge.c` is included by the existing native `init.c`; no new image role,
+runtime dependency, production kernel configuration or lock is introduced.
+The test still has only loopback and the mandatory vsock device, never a NIC,
+firewall, new product transport or host-network connector.
+
+* The two boot-local slots are protected ports **900/901**, reserved once by a
+  monotonic capacity-two allocator. Retired slots are tombstones and are never
+  reassigned, even to the same fixture. Exhaustion returns `ENOSPC` with no
+  activation; production capacity, recovery and reuse are explicitly unsupported.
+* Trusted bootstrap creates sealed cgroups and sets the privileged-port boundary
+  to 1024. A separately executed **uid/gid 989** egress fixture binds IPv4 and
+  IPv6 listeners with only `CAP_NET_BIND_SERVICE` (10). After exec it checks the
+  effective/permitted/inheritable/bounding/ambient sets exactly. Tools have zero
+  capabilities and cannot bind either protected port (`EACCES`, both families).
+* Only after the egress listener-ready acknowledgment does PID 1 install each
+  immutable private-listener-to-opaque-binding test fixture and activate the
+  leaf's `BPF_MAP_TYPE_CGROUP_STORAGE` value. Storage keys include the cgroup
+  inode and connect4/connect6 attachment type; both values are read back.
+* Leaf connect4/connect6 hooks redirect ordinary **127.0.0.1:1080 / ::1:1080**
+  to the active private slot. Root guards reject directly requested private
+  ports for every cgroup and identity: trusted root, root-cgroup tool, both
+  admitted invocation tools, egress and sibling egress. No privileged bypass.
+* **Default Linux 6.12 effective program order is leaf-before-root.** The root
+  guards use explicit `BPF_F_PREORDER` links, retaining multi-program inheritance,
+  never override. The matching
+  [`compute_effective_progs`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/bpf/cgroup.c)
+  orders these before leaf programs. Actual verifier load, PREORDER attach,
+  successful private-listener accepts and exact redirect/denial counters are
+  mandatory runtime gates. Unsupported flags/helpers fail, never fall back.
+* Both active invocations select distinct opaque fixtures for both families.
+  Fork descendants select the same slot. The egress fixture accepts the actual
+  redirected TCP socket, reads the tool's witnessed SEND byte, and obtains its
+  **actual local port with `getsockname`**. That port—not a simulated address or
+  a caller-supplied binding—is the lookup key.
+* A narrow test query uses the existing registered AF_UNIX control-pair style.
+  Kernel `SCM_CREDENTIALS` must match uid/gid 989 **and the trusted launched PID**;
+  `SO_PEERCRED` on a pre-created socketpair would incorrectly authenticate its
+  creator. The root fixture answers only immutable live bindings; unknown,
+  unauthenticated and retired queries return zero (unbound). A uid-1000 tool and
+  a same-uid sibling egress get deliberately granted adversarial test channels
+  and must receive zero for a guessed live port. No SCM_RIGHTS transfer is used;
+  blanket socket `file_receive` denial remains active.
+* The final connection is accepted only after slot release/tombstoning and
+  before any query: its lookup returns zero. No reassignment occurs. This is
+  ordered fixture behavior, not a concurrent teardown guarantee.
+* Inactive slots initially leave normal 1080 unredirected (`ECONNREFUSED`).
+  Separately, real ordinary 1080 listeners accept and read bytes from an
+  unadmitted sibling in both families with **zero redirects/bindings**.
+  Unbound SK_STORAGE has immutable owner cgroup and zero label/generation,
+  never the infrastructure flag. It is created only for normal loopback 1080
+  without any admission entry; SEND requires the same still-unadmitted owner
+  and the socket's actual remote loopback address/1080 port. Installing even
+  an inactive admission disables that exemption. Bound snapshots retain the
+  previous generation/revocation rules unchanged.
+
+The root fixture owns setup and the lookup table; it is **bootstrap/test
+infrastructure only**, not a long-lived production loader or host FlowMux.
+A bounded separate child loads the actual object and attaches root/LSM hooks
+with exactly `CAP_NET_ADMIN` (12), `CAP_PERFMON` (38), `CAP_BPF` (39), represented
+as `uint64_t` and two cap words. Three negative trials omit one capability each
+and must fail loading with `EPERM`; no `CAP_SYS_ADMIN` workaround. These gates
+discover what the actual kernel needs; they have not been proved by source
+checks. The child drops its permitted/effective mask and exits before tools;
+each tool independently drops all capabilities, and egress never receives
+bootstrap capabilities.
+
+Accepted TCP sockets are **read-only fixtures**: the egress does not send on
+them or mark them as infrastructure. There is no broad uid-989/INET SEND
+exemption. Bidirectional proxy behavior, production claims, executable identity,
+host FlowMux, snapshot/restore and production slot reuse are not proved.
+
 ## Explicitly unsupported, even after partial PASS
 
 * Concurrent teardown/in-flight syscall races, cgroup-ID wraparound, generation
@@ -154,10 +240,10 @@ Python source checks establish none of these runtime properties.
 * ptrace attacks beyond the tested nondumpable sibling access checks, enabled
   io_uring, non-socket SCM transfers, UDP, and transports other than this TCP
   loopback probe. Socket receive remains blanket-denied even within invocation.
-* **Production EGRESS BRIDGE remains open.** The preferred next separate
-  experiment is a private per-invocation **loopback proxy listener plus
-  cgroup-connect redirect**, not a new AF_UNIX product transport. No production
-  proxy, redirect, connector or runtime coupling is implemented here.
+* **Production EGRESS BRIDGE remains open.** This bounded private-listener
+  cgroup-connect redirect is a development-only accepted-binding fixture.
+  Bidirectional proxy/connector behavior and production runtime integration
+  remain absent; the test control socketpair is not a product protocol.
 * Claim protocol, an authenticated connector, external networking, and actual
   executable identity/content inspection. The 0551/nondumpable test establishes
   **cgroup observability**, not executable attestation.

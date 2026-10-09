@@ -26,7 +26,9 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotIn(forbidden, " ".join(cmd))
 
     def test_acceptance_requires_all_exact_markers_clean_exit_and_no_failure(self):
-        markers = (boot.PASS, boot.LIFECYCLE_PASS, boot.UNSUPPORTED)
+        markers = (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
+                   boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
+                   boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED)
         good = "\r\n".join(markers) + "\r\n"
         boot.validate_output(good, 0)
         for output, code in [
@@ -63,8 +65,11 @@ class ProbeTests(unittest.TestCase):
 
     def test_guest_and_host_coverage_markers_cannot_drift(self):
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
-        for marker in (boot.PASS, boot.LIFECYCLE_PASS, boot.UNSUPPORTED):
-            self.assertIn(f'"{marker}\\n"', init)
+        bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
+        for marker in (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
+                       boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
+                       boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED):
+            self.assertIn(f'"{marker}\\n"', init + bridge)
         for unsupported in ("production-egress-bridge", "claim-protocol",
                             "verifier-faults", "exec-identity",
                             "concurrent-teardown", "non-TCP"):
@@ -130,6 +135,52 @@ class ProbeTests(unittest.TestCase):
             self.assertIn(contract, init)
         self.assertNotIn("readdir", init)
         self.assertNotIn("SYS_ptrace", init)
+
+    def test_bridge_uses_local_storage_preorder_and_actual_accepted_socket(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
+        for contract in ("BPF_MAP_TYPE_CGROUP_STORAGE", "bpf_get_local_storage",
+                         "struct bpf_cgroup_storage_key", "count(9)", "count(10)",
+                         "count(11)", "count(12)", "bpf_htons(1080)"):
+            self.assertIn(contract, bpf)
+        for contract in ("BPF_F_PREORDER", "bpf_link_create(", "getsockname(fd,",
+                         "accept4(listeners", "SCM_CREDENTIALS", "SO_PASSCRED",
+                         "cred.pid == egress && cred.uid == 989 && cred.gid == 989",
+                         "live_binding[i] && !tombstone[i]", "reserve_slot() == -1",
+                         "errno == ENOSPC", "query.port = ss.ss_family",
+                         "tool-and-sibling-egress-query-unbound",
+                         "unbound-real1080-data-no-binding",
+                         "trusted-root-direct-private-denied"):
+            self.assertIn(contract, bridge)
+        self.assertLess(bridge.index("live_binding[i] = true"),
+                        bridge.index("slot_state(slots, ids[i], i, true)"))
+        release = bridge.index("live_binding[slot] = false")
+        query = bridge.index("received_query(pair[0], egress", release)
+        self.assertLess(release, query)
+        self.assertNotIn("allocated--", bridge)
+        self.assertNotIn("BPF_F_ALLOW_OVERRIDE", bridge)
+
+    def test_unbound_send_remains_owned_and_exact_normal_destination(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        for contract in ("struct socket_label unbound = { .cgroup = id }",
+                         "!s->label && !s->generation && !s->infrastructure",
+                         "s->cgroup == id && !bpf_map_lookup_elem(&invocation, &id)",
+                         "normal_destination(sk)", "skc_dport != bpf_htons(1080)",
+                         "skc_daddr == bpf_htonl(0x7f000001)", "skc_v6_daddr"):
+            self.assertIn(contract, bpf)
+
+    def test_bootstrap_caps_are_two_words_and_not_leaked_after_egress_exec(self):
+        bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
+        for contract in ("caps[2]", "mask >> (word * 32)",
+                         "UINT64_C(1) << CAP_PERFMON", "UINT64_C(1) << CAP_BPF",
+                         "capability_trial(CAP_NET_ADMIN)",
+                         "capability_trial(CAP_PERFMON)", "capability_trial(CAP_BPF)",
+                         "bpf_object__load(obj) == -EPERM",
+                         "setresuid(989, 989, 989)",
+                         "i != CAP_NET_BIND_SERVICE",
+                         "exact_cap_mask(UINT64_C(1) << CAP_NET_BIND_SERVICE, true)"):
+            self.assertIn(contract, bridge)
+        self.assertNotIn("<< CAP_SYS_ADMIN", bridge)
 
 
 if __name__ == "__main__":
