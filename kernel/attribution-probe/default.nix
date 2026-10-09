@@ -29,6 +29,7 @@ let
   rootfs = pkgs.runCommand "experimental-attribution-probe-rootfs" {
     nativeBuildInputs = [ pkgs.e2fsprogs ];
   } ''
+    set -euxo pipefail
     mkdir -p root/{dev,proc,sys,nix/store}
     while IFS= read -r path; do cp -a "$path" root/nix/store/; done < ${closure}/store-paths
     cp ${probe}/bin/init root/init
@@ -37,8 +38,9 @@ let
     cp ${probe}/share/probe.bpf.o root/probe.bpf.o
     # All files are image-owned uid/gid 0, including the execute-only tool.
     mkdir -p $out
+    du -sh root
     truncate -s 256M $out/rootfs.ext2
-    E2FSPROGS_FAKE_TIME=1 mke2fs -q -t ext2 -F -m 0 \
+    E2FSPROGS_FAKE_TIME=1 mke2fs -t ext2 -F -m 0 \
       -U 00000000-0000-0000-0000-000000009042 -E root_owner=0:0 \
       -d root $out/rootfs.ext2
     # mke2fs -d preserves builder ownership; normalize every allocated inode.
