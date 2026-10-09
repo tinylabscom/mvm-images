@@ -169,6 +169,27 @@ class ProbeTests(unittest.TestCase):
                          "skc_daddr == bpf_htonl(0x7f000001)", "skc_v6_daddr"):
             self.assertIn(contract, bpf)
 
+    def test_real_unbound_negatives_and_fresh_retired_connect_are_required(self):
+        bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
+        for contract in (
+            "control_pair(storage, sync)", "transmit(fd, 0, true)",
+            "transmit(fd, 0, false)", 'put(OTHER "/cgroup.procs", pid)',
+            'put(SIBLING "/cgroup.procs", pid)',
+            "bpf_map_update_elem(admission_map, &owner_id, &admitted, BPF_NOEXIST)",
+            "command(sync[0], 'A', 0, 1)",
+            "MSG_DONTWAIT) == -1 && errno == EAGAIN",
+            "unbound-owner-cgroup-change-denied",
+            "unbound-original-owner-admitted-denied",
+            "bridge_tcp(family, 1080, false, EPERM)",
+            "bpf_map_update_elem(admission_map, &ids[slot], &retired, BPF_EXIST)",
+            "CHECK(peer == -1 && errno == EAGAIN)",
+            "expected[fresh ? CONNECT6_DENY : CONNECT4_DENY]++",
+            "retired-slot-fresh1080-connect-denied-no-binding",
+        ):
+            self.assertIn(contract, bridge)
+        self.assertLess(bridge.index("slot_state(slots, ids[slot], slot, false)"),
+                        bridge.index('wait_ok(bridge_launch(INV "/cgroup.procs", -1, false, af, 5))'))
+
     def test_bootstrap_caps_are_two_words_and_not_leaked_after_egress_exec(self):
         bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
         for contract in ("caps[2]", "mask >> (word * 32)",

@@ -123,9 +123,9 @@ The preserved lifecycle phase totals are: allowed connect4/connect6 **4/4**,
 socket receive denies **2**, denied connect4/connect6 **3/3**, socket snapshots
 **8**, allowed TCP sends **30**, denied TCP sends **30**, explicit infrastructure
 sends **122**. With the bridge fixtures, expected final totals are allowed
-connect4/connect6 **10/9**, receive denies **2**, ordinary connect denials **3/3**,
-snapshots **27**, allowed sends **39**, denied sends **30**, infrastructure sends
-**158**, private-port denials **12/12**, redirects **4/3** (counter keys 9–12).
+connect4/connect6 **10/9**, receive denies **2**, ordinary connect denials **4/4**,
+snapshots **27**, allowed sends **39**, denied sends **34**, infrastructure sends
+**170**, private-port denials **12/12**, redirects **4/3** (counter keys 9–12).
 The per-command checks are stronger than these totals: a missing denial on one
 API cannot be hidden by extra hook calls on another.
 
@@ -215,6 +215,25 @@ firewall, new product transport or host-network connector.
   and the socket's actual remote loopback address/1080 port. Installing even
   an inactive admission disables that exemption. Bound snapshots retain the
   previous generation/revocation rules unchanged.
+* In each family the same successfully connected unbound socket first sends
+  real DATA, then must fail `sendmsg` with exactly `EPERM` after its uid-1000
+  owner moves to the independent active invocation. After moving back, installing
+  an active admission for the original owner must also yield exactly `EPERM`.
+  Each operation adds exactly one SEND denial, no allowed send or redirect;
+  the peer must return `EAGAIN` with no DATA. Only the AF_UNIX control pair is
+  infrastructure, used for synchronization; the TCP descriptor never is.
+* After slot 0's leaf redirect is disabled and binding tombstoned, fresh
+  IPv4 and IPv6 connects are attempted against real ordinary 1080 listeners.
+  The original admission is retained but marked inactive before these attempts.
+  **Connect must fail with exactly `EPERM` under the current policy**: the root
+  guard denies a present inactive admission rather than allowing unbound fallback.
+  Each family adds exactly one connect denial, no snapshot, SEND or redirect;
+  the ordinary listener's nonblocking accept must return `EAGAIN`, and the slot
+  remains without a live binding. Merely disabling the leaf while leaving admission
+  active would allow ordinary 1080 connect and bound SEND; that is not retirement
+  and is not accepted as fail-closed evidence here. The queued private
+  connection's retired lookup is still checked separately. This proves bounded
+  fixture fail-closed DATA behavior, not production retirement/readiness.
 
 The root fixture owns setup and the lookup table; it is **bootstrap/test
 infrastructure only**, not a long-lived production loader or host FlowMux.

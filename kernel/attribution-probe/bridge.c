@@ -187,6 +187,9 @@ static int bridge_tool(int family, int mode)
         uint64_t binding = UINT64_MAX;
         CHECK(read(3, &binding, sizeof(binding)) == sizeof(binding) && !binding);
         CHECK(write(3, "K", 1) == 1);
+    } else if (mode == 5) {
+        /* Retired admission remains present but inactive: no unbound fallback. */
+        close(bridge_tcp(family, 1080, false, EPERM));
     } else die("bridge tool mode");
     return 0;
 }
@@ -372,7 +375,33 @@ static void bridge_probe(struct bpf_object *obj, int admission_map, int storage)
     for (int family = 0; family < 2; family++) {
         int af = family ? AF_INET6 : AF_INET;
         int listener = bridge_tcp(af, 1080, true, 0);
-        wait_ok(bridge_launch(SIBLING "/cgroup.procs", -1, false, af, 1));
+        int sync[2];
+        control_pair(storage, sync);
+        pid_t owner = fork();
+        CHECK(owner >= 0);
+        if (!owner) {
+            put(SIBLING "/cgroup.procs", "0");
+            int control = fcntl(sync[1], F_DUPFD_CLOEXEC, 10);
+            CHECK(control >= 0 && dup2(control, 3) == 3);
+            CHECK(syscall(SYS_close_range, 4, ~0U, 0) == 0);
+            unprivileged();
+            check_unprivileged();
+            alarm(20);
+            int fd = bridge_tcp(af, 1080, false, 0);
+            transmit(fd, 0, true);
+            CHECK(write(3, "R", 1) == 1);
+            char command;
+            for (int trial = 0; trial < 2; trial++) {
+                CHECK(read(3, &command, 1) == 1 && command == 'A');
+                transmit(fd, 0, false); /* SAME connected, unbound socket. */
+                CHECK(write(3, "K", 1) == 1);
+            }
+            CHECK(read(3, &command, 1) == 1 && command == 'X');
+            close(fd);
+            _exit(0);
+        }
+        close(sync[1]);
+        CHECK(read(sync[0], &byte, 1) == 1 && byte == 'R');
         int peer = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
         CHECK(peer >= 0 && read(peer, &byte, 1) == 1 && byte == 'M');
         struct sockaddr_storage ss;
@@ -382,7 +411,25 @@ static void bridge_probe(struct bpf_object *obj, int admission_map, int storage)
                ntohs(((struct sockaddr_in6 *)&ss)->sin6_port)) == 1080);
         expected[family ? CONNECT6 : CONNECT4]++;
         expected[SNAPSHOT]++; expected[SEND_ALLOW]++;
+        expected[INFRA_SEND]++;
         exact_counters("unbound-real1080-data-no-binding");
+        char pid[24];
+        snprintf(pid, sizeof(pid), "%d", owner);
+        put(OTHER "/cgroup.procs", pid); /* Independent, already active invocation. */
+        command(sync[0], 'A', 0, 1);
+        CHECK(recv(peer, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+        exact_counters("unbound-owner-cgroup-change-denied");
+        put(SIBLING "/cgroup.procs", pid);
+        struct stat st;
+        CHECK(stat(SIBLING, &st) == 0);
+        uint64_t owner_id = st.st_ino;
+        struct admission admitted = { .label = 92, .generation = 1, .active = 1 };
+        CHECK(bpf_map_update_elem(admission_map, &owner_id, &admitted, BPF_NOEXIST) == 0);
+        command(sync[0], 'A', 0, 1);
+        CHECK(recv(peer, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+        exact_counters("unbound-original-owner-admitted-denied");
+        stop_tool(sync[0], owner);
+        CHECK(bpf_map_delete_elem(admission_map, &owner_id) == 0);
         close(peer); close(listener);
     }
     for (int step = 0; step < 7; step++) {
@@ -399,6 +446,20 @@ static void bridge_probe(struct bpf_object *obj, int admission_map, int storage)
             slot_state(slots, ids[slot], slot, false);
             live_binding[slot] = false; tombstone[slot] = true;
             CHECK(reserve_slot() == -1 && errno == ENOSPC);
+            struct admission retired = { .label = 90 + slot, .generation = 1, .active = 0 };
+            CHECK(bpf_map_update_elem(admission_map, &ids[slot], &retired, BPF_EXIST) == 0);
+            for (int fresh = 0; fresh < 2; fresh++) {
+                int af = fresh ? AF_INET6 : AF_INET;
+                int listener = bridge_tcp(af, 1080, true, 0);
+                CHECK(fcntl(listener, F_SETFL, O_NONBLOCK) == 0);
+                wait_ok(bridge_launch(INV "/cgroup.procs", -1, false, af, 5));
+                int peer = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+                CHECK(peer == -1 && errno == EAGAIN);
+                CHECK(!live_binding[slot] && tombstone[slot]);
+                expected[fresh ? CONNECT6_DENY : CONNECT4_DENY]++;
+                exact_counters("retired-slot-fresh1080-connect-denied-no-binding");
+                close(listener);
+            }
         }
         /* Release is complete BEFORE the egress process makes its query. */
         CHECK(write(pair[0], &cmd, sizeof(cmd)) == sizeof(cmd));
