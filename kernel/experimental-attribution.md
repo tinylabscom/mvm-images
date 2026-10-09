@@ -45,6 +45,10 @@ the derivation. Kconfig-selected dependencies are left to Kconfig, not fabricate
 * Unlike the production baseline, this experiment explicitly disables
   `IO_URING`: ring-FD transfer can bypass a simplistic SCM_RIGHTS socket guard.
   This may constrain applications; it is not a production compatibility change.
+* x86_64 defconfig requests `BLK_DEV_IO_TRACE`. Enabling the tracing
+  prerequisites makes that request effective again, and it selects `DEBUG_FS`.
+  Explicitly disable block-I/O tracing in the experiment; it is unrelated to
+  attribution and must not defeat the inherited debugfs prohibition.
 * No namespace/container posture is added. Resource controllers are disabled;
   only the cgroup hierarchy and BPF hook support are required. No NIC, TAP,
   TUN, veth, bridge, macvlan, netfilter, packet socket, or traffic-control path.
