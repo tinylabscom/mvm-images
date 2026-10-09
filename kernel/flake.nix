@@ -33,6 +33,10 @@
           rootless = import ./rootless.nix { inherit pkgs base; };
           builder = import ./builder.nix { inherit pkgs base; };
 
+          # BEGIN development-only experimental-attribution
+          experimentalAttribution = import ./experimental-attribution.nix { inherit pkgs base; };
+          # END development-only experimental-attribution
+
           # "aarch64" / "x86_64" for the published filenames (matches the
           # per-arch checksum-manifest naming the downloader verifies).
           arch = nixpkgs.lib.head (nixpkgs.lib.splitString "-" system);
@@ -125,6 +129,10 @@
             '';
         in
         {
+          # BEGIN development-only experimental-attribution
+          experimental-attribution-vmlinux = experimentalAttribution;
+          experimental-attribution-configfile = experimentalAttribution.passthru.configfile;
+          # END development-only experimental-attribution
           workload-vmlinux = workload;
           rootless-vmlinux = rootless;
           builder-vmlinux = builder;

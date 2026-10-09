@@ -1,0 +1,52 @@
+name: Experimental attribution config
+
+on:
+  push:
+    branches: [experiment/kernel-attribution]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve config (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa
+      - name: Check source contracts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_experimental_attribution.py'
+      - name: Evaluate kernel and resolve configuration
+        env:
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/attribution-config"
+          nix eval --raw --no-write-lock-file \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-vmlinux.drvPath" \
+            > "$RUNNER_TEMP/attribution-config/kernel.drv"
+          config="$(nix build --no-write-lock-file --no-link --print-out-paths \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-configfile")"
+          python3 kernel/check-experimental-attribution.py \
+            --contract kernel/experimental-attribution.json "$config"
+          cp "$config" "$RUNNER_TEMP/attribution-config/kernel.config"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/attribution-config/source-commit"
+      - name: Retain experimental configuration evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: experimental-config-${{ matrix.system }}
+          path: ${{ runner.temp }}/attribution-config/
+          if-no-files-found: error
+          retention-days: 7

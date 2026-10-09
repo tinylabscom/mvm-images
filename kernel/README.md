@@ -35,6 +35,15 @@ Two ways the same files are consumed:
 Nothing is vendored under this directory. The source of truth is the
 enable/disable lists in `base.nix` + the two deltas.
 
+## Development-only experiments
+
+[`experimental-attribution.md`](./experimental-attribution.md) describes the
+isolated cgroup-BPF/BPF-LSM feasibility configuration, its pinned-source
+dependency audit, resolved-config assertions, Linux-only build commands and
+remaining runtime validation. Its explicitly named development outputs are not
+published and do not change the three production kernels. This is not an
+invocation-attribution security guarantee.
+
 ## Why a slim, all-built-in kernel
 
 Stock `pkgs.linuxPackages.kernel` ships hundreds of `=m` modules
