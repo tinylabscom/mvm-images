@@ -58,7 +58,7 @@ class ExperimentalAttributionTests(unittest.TestCase):
             with self.subTest(file=str(path.relative_to(ROOT))):
                 self.assertNotIn(b"experimental-attribution", path.read_bytes())
 
-    def test_experimental_workflow_only_resolves_configs(self):
+    def test_experimental_workflow_isolated_from_production(self):
         workflow = (ROOT / ".github/workflows/experimental-attribution.yml").read_text()
         self.assertIn("branches: [experiment/kernel-attribution]", workflow)
         self.assertIn("contents: read", workflow)
@@ -67,6 +67,11 @@ class ExperimentalAttributionTests(unittest.TestCase):
         self.assertIn('experimental-attribution-vmlinux.drvPath', workflow)
         self.assertIn('experimental-attribution-configfile', workflow)
         self.assertNotIn('nix build "./kernel#workload', workflow)
+        self.assertIn("needs: resolve", workflow)
+        self.assertIn("experimental-kernel-${{ matrix.system }}", workflow)
+        self.assertIn("sha256sum", workflow)
+        self.assertNotIn("assemble-release", workflow)
+        self.assertNotIn("gh release", workflow)
         for system in ("x86_64-linux", "aarch64-linux"):
             self.assertIn(system, workflow)
 

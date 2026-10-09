@@ -1,6 +1,6 @@
 # Development-only invocation-attribution kernel spike
 
-This is an **unbuilt, unbooted feasibility configuration**, not a production
+This is an **experimental feasibility configuration**, not a production
 profile, release role, or security guarantee. It wraps `workload.nix`, not
 `rootless.nix`, and reuses `base.nix`'s exact Linux **6.12.111** source and the
 existing `kernel/flake.lock` toolchain. No production recipe, image-set member,
@@ -63,11 +63,14 @@ the derivation. Kconfig-selected dependencies are left to Kconfig, not fabricate
 
 ## Commands and remaining validation
 
-The isolated `Experimental attribution config` Actions workflow runs on pushes
+The isolated `Experimental attribution kernel` Actions workflow runs on pushes
 to `experiment/kernel-attribution` or manual dispatch. Native Linux runners
 evaluate the kernel derivation and generate/check each architecture's resolved
-config, retaining configuration evidence for seven days. It builds no kernel
-image, creates no release, and is not called by the publication workflows.
+config before building either experimental kernel. It checks kernel formats
+and retains the images, resolved configs, source commits and SHA-256 hashes
+as workflow artifacts for seven days. It creates no release and is not called
+by the publication workflows. Successful compilation alone does not prove
+bootability, hook behavior, enforcement, or performance.
 
 Pure native checks (including on macOS; no Nix evaluation required):
 

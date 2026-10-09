@@ -1,4 +1,4 @@
-name: Experimental attribution config
+name: Experimental attribution kernel
 
 on:
   push:
@@ -48,5 +48,65 @@ jobs:
         with:
           name: experimental-config-${{ matrix.system }}
           path: ${{ runner.temp }}/attribution-config/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build kernel (${{ matrix.system }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-24.04
+            image: vmlinux
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+            image: Image
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa
+      - name: Build experimental kernel
+        env:
+          SYSTEM: ${{ matrix.system }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          output="$(nix build --no-write-lock-file --no-link --print-out-paths \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-vmlinux")"
+          config="$(nix build --no-write-lock-file --no-link --print-out-paths \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-configfile")"
+          python3 kernel/check-experimental-attribution.py \
+            --contract kernel/experimental-attribution.json "$config"
+          evidence="$RUNNER_TEMP/attribution-kernel"
+          mkdir -p "$evidence"
+          cp "$output/$IMAGE" "$evidence/$IMAGE"
+          cp "$config" "$evidence/kernel.config"
+          printf '%s\n' "$GITHUB_SHA" > "$evidence/source-commit"
+          printf '%s\n' "$output" > "$evidence/nix-store-path"
+          python3 - "$evidence/$IMAGE" "$SYSTEM" <<'PY'
+          import pathlib, sys
+          path, system = pathlib.Path(sys.argv[1]), sys.argv[2]
+          with path.open("rb") as image:
+              header = image.read(64)
+          if system == "x86_64-linux":
+              assert header[:4] == b"\x7fELF", "Firecracker requires the ELF kernel"
+              assert header[4:6] == b"\x02\x01", "expected little-endian ELF64"
+              assert int.from_bytes(header[18:20], "little") == 62, "wrong ELF machine"
+          else:
+              assert header[56:60] == b"ARM\x64", "expected arm64 Image header"
+          print(f"{system}: {path.stat().st_size} bytes; artifact format verified")
+          PY
+          (cd "$evidence" && sha256sum "$IMAGE" kernel.config source-commit > SHA256SUMS)
+      - name: Retain experimental kernel evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: experimental-kernel-${{ matrix.system }}
+          path: ${{ runner.temp }}/attribution-kernel/
           if-no-files-found: error
           retention-days: 7
