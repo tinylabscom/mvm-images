@@ -80,6 +80,15 @@ static __always_inline struct admission *current_admission(void)
     return a && a->active && a->label && a->generation ? a : 0;
 }
 
+static __always_inline int normal_proxy_allowed(void)
+{
+    __u64 id = bpf_get_current_cgroup_id();
+    struct admission *a = bpf_map_lookup_elem(&invocation, &id);
+    /* A retired/invalid record is not an ordinary unbound workload. Keep
+     * its tombstone authoritative instead of falling through to port 1080. */
+    return !a || (a->active && a->label && a->generation);
+}
+
 static __always_inline int normal_destination(struct sock *sk)
 {
     if (sk->__sk_common.skc_dport != bpf_htons(1080))
@@ -103,8 +112,9 @@ int connect4(struct bpf_sock_addr *ctx)
     }
     if (ctx->user_ip4 == bpf_htonl(0x7f000001) &&
         ctx->user_port == bpf_htons(1080)) {
-        count(0);
-        return 1; /* Unbound normal endpoint remains ordinary ECONNREFUSED. */
+        int allow = normal_proxy_allowed();
+        count(allow ? 0 : 3);
+        return allow;
     }
     int allow = current_admission() != 0;
     count(allow ? 0 : 3);
@@ -120,8 +130,9 @@ int connect6(struct bpf_sock_addr *ctx)
     }
     if (!ctx->user_ip6[0] && !ctx->user_ip6[1] && !ctx->user_ip6[2] &&
         ctx->user_ip6[3] == bpf_htonl(1) && ctx->user_port == bpf_htons(1080)) {
-        count(1);
-        return 1;
+        int allow = normal_proxy_allowed();
+        count(allow ? 1 : 4);
+        return allow;
     }
     int allow = current_admission() != 0;
     count(allow ? 1 : 4);
