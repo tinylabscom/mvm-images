@@ -102,6 +102,33 @@ class ExperimentalAttributionTests(unittest.TestCase):
             "CGROUPS", "CGROUP_BPF", "BPF_UNPRIV_DEFAULT_OFF", "SECURITY_LANDLOCK",
         } <= enabled)
 
+    def test_lsm_attach_requires_function_entry_and_direct_call_support(self):
+        # BPF_LSM/BPF_EVENTS/JIT alone loaded successfully but failed attachment
+        # on both architectures in run 37983480539. Freeze the attach contract
+        # independently of the generic checker tests' generated "good" config.
+        required = {
+            "FUNCTION_TRACER", "DYNAMIC_FTRACE", "DYNAMIC_FTRACE_WITH_ARGS",
+            "DYNAMIC_FTRACE_WITH_DIRECT_CALLS", "CC_OPTIMIZE_FOR_PERFORMANCE",
+        }
+        self.assertTrue(required <= set(CONTRACT["enables"]))
+        # arm64 GCC cannot select CALL_OPS (and hence DIRECT_CALLS) under -Os.
+        self.assertIn("CC_OPTIMIZE_FOR_SIZE", CONTRACT["disables"])
+        recipe = (ROOT / "kernel/experimental-attribution.nix").read_text()
+        # Freeze normalization: retain every unrelated inherited enable, remove
+        # only contract disables, then append the required experimental enables.
+        # This is a source contract, not Nix evaluation on the native host.
+        self.assertIn(
+            "enableList = join (lib.unique ((without contract.disables old.enableList)"
+            " ++ contract.enables));",
+            recipe,
+        )
+        self.assertIn(
+            "without = removed: value: lib.filter (s: !(builtins.elem s removed)) (words value);",
+            recipe,
+        )
+        self.assertIn("without contract.enables old.disableList", recipe)
+        self.assertIn("without contract.enables old.requiredDisableList", recipe)
+
     def test_resolved_config_rejects_every_dropped_enable_and_reverted_disable(self):
         good = "".join(f"CONFIG_{s}=y\n" for s in CONTRACT["enables"])
         good += f'CONFIG_LSM="{CONTRACT["lsm"]}"\n'

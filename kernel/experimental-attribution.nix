@@ -15,7 +15,9 @@ let
       pkgs.buildPackages.pahole
       pkgs.buildPackages.python3
     ];
-    enableList = join (lib.unique ((words old.enableList) ++ contract.enables));
+    # The shared experiment contract replaces the inherited size-optimization
+    # choice: arm64 GCC direct-call ftrace requires !CC_OPTIMIZE_FOR_SIZE.
+    enableList = join (lib.unique ((without contract.disables old.enableList) ++ contract.enables));
     disableList = join ((without contract.enables old.disableList) ++ contract.disables);
     requiredDisableList = join (
       (without contract.enables old.requiredDisableList) ++ contract.disables

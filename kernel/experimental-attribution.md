@@ -29,11 +29,73 @@ hash-pinned source in `base.nix`.
 | Landlock and activation list | [`security/Kconfig`](https://github.com/gregkh/linux/blob/v6.12.111/security/Kconfig): `SECURITY` needs `SYSFS` and `MULTIUSER`; [`security/landlock/Kconfig`](https://github.com/gregkh/linux/blob/v6.12.111/security/landlock/Kconfig) selects `SECURITY_NETWORK` and `SECURITY_PATH`. Resolve `LSM="landlock,bpf"` explicitly. A boot `lsm=` parameter can override this; runtime activation must be checked separately. |
 
 `experimental-attribution.json` is the single request/assertion contract.
-The wrapper removes only its explicit enables from the production disable
-lists. All other base guards survive. After `olddefconfig`, both the existing
+The wrapper removes its explicit enables from the production disable lists
+and its explicit disables from the inherited enable list. All unrelated base
+guards survive. After `olddefconfig`, both the existing
 enable guard and the experiment's checker run; a dropped required symbol,
 module instead of built-in, restored forbidden option, or wrong LSM list fails
 the derivation. Kconfig-selected dependencies are left to Kconfig, not fabricated.
+
+### LSM attach failure: load support is not trampoline support
+
+[Run 37983480539](https://github.com/tinylabscom/mvm-images/actions/runs/37983480539),
+revision `a8edb57f99273afa8b7e38a931c6e1e27daa171d`, built both kernels/rootfs
+and reached `receive` attachment after object load, but x86_64 returned
+`EBUSY` (16) and arm64 `ENOTSUPP` (524). The downloaded
+`experimental-config-{x86_64,aarch64}-linux/kernel.config` artifacts both have
+`BPF_LSM`, `BPF_EVENTS`, `BPF_JIT`, `BPF_JIT_DEFAULT_ON` and `FTRACE` set to
+`y`, but `FUNCTION_TRACER` unset and no enabled `DYNAMIC_FTRACE*` symbols.
+Both use GCC and `CC_OPTIMIZE_FOR_SIZE=y`. This is not evidence of an occupied
+LSM hook or missing JIT; the pinned source explains the architecture-specific
+errors:
+
+* Without `DYNAMIC_FTRACE`,
+  [`ftrace_location()`](https://github.com/gregkh/linux/blob/v6.12.111/include/linux/ftrace.h#L954-L966)
+  is a stub returning zero.
+  [`register_fentry()`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/bpf/trampoline.c#L209-L232)
+  therefore bypasses `register_ftrace_direct()` and calls
+  `bpf_arch_text_poke(ip, BPF_MOD_CALL, NULL, new_addr)`.
+* On x86,
+  [`__bpf_arch_text_poke()`](https://github.com/gregkh/linux/blob/v6.12.111/arch/x86/net/bpf_jit_comp.c#L575-L615)
+  expects a five-byte NOP when `old_addr` is NULL. The instruction comparison
+  at lines 604–607 returns `-EBUSY` on a mismatch. With function-entry tracing
+  disabled, the LSM kernel function has no promised patchable entry.
+* On arm64,
+  [`bpf_arch_text_poke()`](https://github.com/gregkh/linux/blob/v6.12.111/arch/arm64/net/bpf_jit_comp.c#L2566-L2587)
+  returns `-ENOTSUPP` for an address not belonging to BPF text. Its comment
+  explicitly requires ftrace for kernel functions, including this LSM target.
+
+These are source/config-based error-path diagnoses, not an instrumented kernel
+stack trace. The minimal shared attach contract now requests and checks
+`FUNCTION_TRACER`, `DYNAMIC_FTRACE`, `DYNAMIC_FTRACE_WITH_ARGS`, and
+`DYNAMIC_FTRACE_WITH_DIRECT_CALLS`, all built-in.
+[`kernel/trace/Kconfig`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/trace/Kconfig#L245-L285)
+requires function tracing for dynamic ftrace; direct calls require the
+architecture capability and either REGS or ARGS. Merely enabling function
+tracing is insufficient:
+[`trampoline.c`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/bpf/trampoline.c#L155-L164)
+allocates `tr->fops` only with direct calls; `register_fentry()` returns
+`-ENOTSUPP` if a traced location exists but `tr->fops` does not.
+
+In particular,
+[`arm64/Kconfig`](https://github.com/gregkh/linux/blob/v6.12.111/arch/arm64/Kconfig#L203-L213)
+selects direct-call capability only with ARGS and CALL_OPS; CALL_OPS requires
+ARGS, no Clang CFI, and `(CC_IS_CLANG || !CC_OPTIMIZE_FOR_SIZE)`. The archived
+arm64 config already has `GCC_SUPPORTS_DYNAMIC_FTRACE_WITH_ARGS=y`, but GCC's
+size optimization blocks CALL_OPS. The experiment therefore switches its shared
+optimization choice to `CC_OPTIMIZE_FOR_PERFORMANCE=y` and
+`CC_OPTIMIZE_FOR_SIZE=n`. This deliberately keeps one two-architecture contract,
+rather than adding architecture-specific overrides; x86 does not itself
+require that optimization switch. Kconfig must derive the architecture
+capabilities and arm64 CALL_OPS; no `HAVE_*` capability is forced.
+
+Function-entry instrumentation and performance optimization may increase image
+size and boot cost. They affect only the experimental wrapper, not production
+recipes. JIT runtime availability, ftrace initialization and successful direct
+attachment remain runtime gates; neither the old successful load nor the new
+static contract proves them. Fresh Linux CI must resolve both configurations,
+rebuild, attach `receive`, and execute the SCM_RIGHTS denial/counter checks before
+claiming even the partial hook PASS. No new boot or performance result is claimed.
 
 ## Deliberate exposure and limitations
 
