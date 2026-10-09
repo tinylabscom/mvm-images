@@ -77,8 +77,9 @@ as workflow artifacts for seven days. It creates no release and is not called
 by the publication workflows. Successful compilation alone does not prove
 bootability, hook behavior, enforcement, or performance.
 
-After both kernel builds pass, native Linux jobs build the standalone probe
-rootfs and boot it directly under QEMU with explicit TCG and mandatory vsock.
+Native Linux jobs compile the standalone probe rootfs before the kernel so
+probe compiler errors fail quickly. After both builds pass, boot jobs verify
+the retained kernel/rootfs hashes and run QEMU with explicit TCG and mandatory vsock.
 This is a functional hook-viability gate, not a boot-latency measurement.
 Guest logs retain the exact partial-success and unsupported-coverage markers;
 the probe's blanket socket-FD receipt denial is not a production policy.

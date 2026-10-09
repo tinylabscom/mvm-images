@@ -4,11 +4,13 @@ let
     pname = "experimental-attribution-probe";
     version = "0";
     src = ./.;
-    nativeBuildInputs = [ pkgs.clang pkgs.pkg-config ];
+    nativeBuildInputs = [ pkgs.llvmPackages.clang-unwrapped pkgs.pkg-config ];
     buildInputs = [ pkgs.libbpf pkgs.elfutils pkgs.zlib ];
     buildPhase = ''
       runHook preBuild
-      clang -target bpf -O2 -g -Wall -Werror \
+      # Nix's native cc-wrapper adds host-only hardening flags that are
+      # invalid for BPF. Keep $CC wrapped/hardened for the guest executable.
+      ${pkgs.llvmPackages.clang-unwrapped}/bin/clang -target bpf -O2 -g -Wall -Werror \
         -I${pkgs.linuxHeaders}/include -I${pkgs.lib.getDev pkgs.libbpf}/include \
         -c probe.bpf.c -o probe.bpf.o
       $CC -O2 -g -Wall -Wextra -Werror init.c \

@@ -85,15 +85,10 @@ jobs:
           cd "$RUNNER_TEMP/attribution-kernel"
           test "$(cat source-commit)" = "$GITHUB_SHA"
           sha256sum -c SHA256SUMS
-      - name: Build standalone native probe
-        env:
-          SYSTEM: ${{ matrix.system }}
+      - name: Check probe contracts
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts/tests -p 'test_attribution_probe.py'
-          nix build --no-write-lock-file \
-            "./kernel#packages.${SYSTEM}.experimental-attribution-probe-rootfs" \
-            --out-link "$RUNNER_TEMP/attribution-rootfs"
       - name: Prepare direct VMM and mandatory vsock
         env:
           QEMU_PACKAGE: ${{ matrix.qemu }}
@@ -114,7 +109,7 @@ jobs:
           sudo python3 scripts/experimental_attribution_boot.py \
             --arch "$ARCH" \
             --kernel "$RUNNER_TEMP/attribution-kernel/$IMAGE" \
-            --rootfs "$RUNNER_TEMP/attribution-rootfs/rootfs.ext2" \
+            --rootfs "$RUNNER_TEMP/attribution-kernel/rootfs.ext2" \
             --accel tcg --timeout 90 \
             2>&1 | tee "$RUNNER_TEMP/attribution-probe.log"
       - name: Retain guest probe evidence
@@ -146,6 +141,14 @@ jobs:
         with:
           persist-credentials: false
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa
+      - name: Build standalone native probe before kernel
+        env:
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          nix build --no-write-lock-file \
+            "./kernel#packages.${SYSTEM}.experimental-attribution-probe-rootfs" \
+            --out-link "$RUNNER_TEMP/attribution-rootfs"
       - name: Build experimental kernel
         env:
           SYSTEM: ${{ matrix.system }}
@@ -160,6 +163,7 @@ jobs:
             --contract kernel/experimental-attribution.json "$config"
           evidence="$RUNNER_TEMP/attribution-kernel"
           mkdir -p "$evidence"
+          cp "$RUNNER_TEMP/attribution-rootfs/rootfs.ext2" "$evidence/rootfs.ext2"
           cp "$output/$IMAGE" "$evidence/$IMAGE"
           if [ "$SYSTEM" = x86_64-linux ]; then
             # Firecracker consumes ELF; the standalone QEMU probe consumes
@@ -184,9 +188,9 @@ jobs:
           PY
           (cd "$evidence" &&
             if [ "$SYSTEM" = x86_64-linux ]; then
-              sha256sum "$IMAGE" bzImage kernel.config source-commit > SHA256SUMS
+              sha256sum "$IMAGE" bzImage rootfs.ext2 kernel.config source-commit > SHA256SUMS
             else
-              sha256sum "$IMAGE" kernel.config source-commit > SHA256SUMS
+              sha256sum "$IMAGE" rootfs.ext2 kernel.config source-commit > SHA256SUMS
             fi)
       - name: Retain experimental kernel evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
