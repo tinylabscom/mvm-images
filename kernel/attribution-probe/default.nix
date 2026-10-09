@@ -9,7 +9,7 @@ let
     buildPhase = ''
       runHook preBuild
       clang -target bpf -O2 -g -Wall -Werror \
-        -I${pkgs.linuxHeaders}/include -I${pkgs.libbpf.dev}/include \
+        -I${pkgs.linuxHeaders}/include -I${pkgs.lib.getDev pkgs.libbpf}/include \
         -c probe.bpf.c -o probe.bpf.o
       $CC -O2 -g -Wall -Wextra -Werror init.c \
         $(pkg-config --cflags --libs libbpf) -o init
