@@ -134,7 +134,7 @@ or changing any earlier marker (including earlier `exec-identity` unsupported
 claims, which still describe the earlier socket/bridge phases):
 
 ```text
-ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1
+ATTRIBUTION-PROBE:EXEC-HOOKS:19:allow=1:deny=18:PT_INTERP-native=1
 ATTRIBUTION-PROBE:PASS:native-ELF-task-storage-one-shot-exec-admission-partial
 ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,production-exec-decision,concurrent-exec-revocation
 ```
@@ -309,19 +309,30 @@ checks the **exact** exec counters `{hooks, allows, denies}`:
   `execve`, O_PATH `execveat`, and `fexecve`. Each is exactly one denied hook.
 * Identical-byte `/tool-copy` has a distinct inode; an identical-byte copy on
   sealed read-only tmpfs has a distinct superblock device. Both are denied,
-  as are hardlink and read-only bind aliases of the protected inode.
+  as are hardlink and read-only bind aliases of the protected inode. The
+  foreign-mount fixture does not establish a same-inode/different-device collision.
 * A script chain (`/exec-script` → `/exec-script-next` → `/tool`) is denied
-  at its first hook, never admitted as a supported format.
+  at its first hook as an unknown whitelist identity. This does not isolate
+  the ELF-magic predicate or prove generic rejection of all scripts.
 * Separate gated children test absent permit, inactive scope, changed
   generation, distinct inode, foreign superblock and script chain while a
   native `/tool` permit is still seeded for that exact task where applicable.
   Unknown-file attempts cannot be explained solely by missing task permits.
+* Three further gated children execute positively whitelisted native `/tool`
+  with an active actual cgroup and matching generation. Each seeded permit
+  changes exactly one field: cgroup, inode (same actual device), or device
+  (same actual inode). Each must return EPERM with exactly one denied hook.
+  PID 1 reads back the unchanged unused permit and explicitly deletes it
+  before releasing the child, using the same cleanup checks as other denials.
+  These isolate the three permit comparisons rather than relying on unknown
+  whitelist identities.
 * Unused permits are explicitly removed and read back absent while the child
   is alive and waiting for the final acknowledgment. An inactive newer
   generation is installed **before** release and reap. Task lifetime, not
-  numeric PID reuse, controls storage. No artificial PID reuse test is claimed.
+  numeric PID reuse, controls storage. Same-TGID threads and PID reuse remain
+  explicitly unsupported; no artificial PID reuse test is claimed.
 
-The expected totals are **16 hooks, 1 allow, 15 denies**. The dynamically linked
+The expected totals are **19 hooks, 1 allow, 18 denies**. The dynamically linked
 native fixture must contain exactly one `PT_INTERP`, whose path is checked as
 root-owned and not group/other-writable. Its successful native exec must
 produce **exactly one** `bprm_check_security` invocation, including the actual

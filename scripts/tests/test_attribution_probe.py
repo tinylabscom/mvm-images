@@ -36,6 +36,8 @@ class ProbeTests(unittest.TestCase):
             ("", 0), (boot.PASS, 0), (good, 1), (good + boot.PASS + "\n", 0),
             (good + "ATTRIBUTION-PROBE:FAIL:child\n", 0),
             ("prefix" + good, 0), (good.replace("partial", "production"), 0),
+            (good.replace(boot.EXEC_HOOKS,
+                          "ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1"), 0),
             # The previously passing connect/SCM probe is not lifecycle evidence.
             (boot.PASS + "\n" + boot.UNSUPPORTED + "\n", 0),
         ] + [(good.replace(marker + "\r\n", ""), 0) for marker in markers] + [
@@ -230,7 +232,7 @@ class ProbeTests(unittest.TestCase):
             "bpf_map_freeze(inodes)", "getuid() == 902", "getgid() == 907",
             "setresuid(902, 902, 902)", "setresgid(907, 907, 907)",
             "SYS_close_range, 6, ~0U, 0", "dup3(executable, 5, O_CLOEXEC)",
-            "totals[0] == 16 && totals[1] == 1 && totals[2] == 15",
+            "totals[0] == 19 && totals[1] == 1 && totals[2] == 18",
             'exact_counters("exec-keeps-original-socket-counters")',
             "CHECK(interpreters == 1)", "PT_INTERP", "EM_X86_64", "EM_AARCH64",
         ):
@@ -260,6 +262,32 @@ class ProbeTests(unittest.TestCase):
         self.assertLess(delete, fence)
         self.assertLess(fence, release)
         self.assertLess(release, reap)
+
+    def test_exec_permit_identity_mismatches_use_whitelisted_native_tool(self):
+        execute = (ROOT / "kernel/attribution-probe/exec.c").read_text()
+        self.assertIn("enum { WRONG_CGROUP = 7, WRONG_INODE, WRONG_DEVICE };", execute)
+        self.assertIn(
+            '"/tool-copy", EXEC_DIR "/foreign", "/exec-script",\n'
+            '                           "/tool", "/tool", "/tool" };', execute)
+        seed = execute.index("bpf_map_update_elem(permits, &pidfd, &permit, BPF_NOEXIST)")
+        for trial, field in (
+            ("WRONG_CGROUP", "cgroup"),
+            ("WRONG_INODE", "file.ino"),
+            ("WRONG_DEVICE", "file.dev"),
+        ):
+            mutation = f"if (trial == {trial})\n            permit.{field} ^= UINT64_C(1);"
+            self.assertIn(mutation, execute)
+            self.assertLess(execute.index(mutation), seed)
+        for contract in (
+            "scope.active = 1;",
+            ".cgroup = cg, .generation = scope.generation,\n"
+            "                                      .file = identity",
+            "exec_denied(paths[trial], 0)",
+            "CHECK(denies == (trial == 0 ? 9U : 1U))",
+            "if (trial > 1)",
+            "bpf_map_delete_elem(permits, &pidfd)",
+        ):
+            self.assertIn(contract, execute)
 
 
 if __name__ == "__main__":

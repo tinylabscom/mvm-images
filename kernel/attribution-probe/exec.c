@@ -222,9 +222,12 @@ static void exec_probe(struct bpf_object *obj)
     CHECK(bpf_map_update_elem(scope_map, &cg, &scope, BPF_NOEXIST) == 0);
     uint64_t totals[3] = {0};
     /* Initial success with fork-before-exec; absent, revoked, changed
-     * generation, different inode, different superblock, script-chain. */
+     * generation, unknown files; then isolate each permit identity predicate
+     * against the positively whitelisted native /tool in the active scope. */
+    enum { WRONG_CGROUP = 7, WRONG_INODE, WRONG_DEVICE };
     const char *paths[] = { "/tool", "/tool", "/tool", "/tool",
-                           "/tool-copy", EXEC_DIR "/foreign", "/exec-script" };
+                           "/tool-copy", EXEC_DIR "/foreign", "/exec-script",
+                           "/tool", "/tool", "/tool" };
     for (unsigned trial = 0; trial < sizeof(paths) / sizeof(paths[0]); trial++) {
         scope.active = 1;
         CHECK(bpf_map_update_elem(scope_map, &cg, &scope, BPF_EXIST) == 0);
@@ -264,6 +267,14 @@ static void exec_probe(struct bpf_object *obj)
         CHECK(pidfd >= 0);
         struct exec_permit permit = { .cgroup = cg, .generation = scope.generation,
                                       .file = identity }, readback;
+        /* Change only one permit field. Actual cgroup, generation and opened
+         * file remain valid; whitelist failure cannot mask these comparisons. */
+        if (trial == WRONG_CGROUP)
+            permit.cgroup ^= UINT64_C(1);
+        if (trial == WRONG_INODE)
+            permit.file.ino ^= UINT64_C(1);
+        if (trial == WRONG_DEVICE)
+            permit.file.dev ^= UINT64_C(1);
         if (trial != 1) {
             CHECK(bpf_map_update_elem(permits, &pidfd, &permit, BPF_NOEXIST) == 0);
             CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == 0 &&
@@ -312,12 +323,12 @@ static void exec_probe(struct bpf_object *obj)
         wait_ok(child);
         CHECK(close(pidfd) == 0 && close(gate[1]) == 0 && close(events[0]) == 0);
     }
-    CHECK(totals[0] == 16 && totals[1] == 1 && totals[2] == 15);
+    CHECK(totals[0] == 19 && totals[1] == 1 && totals[2] == 18);
     CHECK(close(tool) == 0);
     CHECK(rmdir(EXEC_CG) == 0);
     /* Keep inactive scope tombstone and LSM link live until poweroff. */
     (void)link;
-    dprintf(1, "ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1\n");
+    dprintf(1, "ATTRIBUTION-PROBE:EXEC-HOOKS:19:allow=1:deny=18:PT_INTERP-native=1\n");
     dprintf(1, "ATTRIBUTION-PROBE:PASS:native-ELF-task-storage-one-shot-exec-admission-partial\n");
     dprintf(1, "ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,production-exec-decision,concurrent-exec-revocation\n");
 }

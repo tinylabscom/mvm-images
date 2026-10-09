@@ -14,7 +14,7 @@ BRIDGE_PASS = "ATTRIBUTION-PROBE:PASS:egress-label-bridge-development-only"
 BRIDGE_CAPACITY = "ATTRIBUTION-PROBE:CAPACITY:2:boot-local-tombstones:no-reuse:exhaustion-closed"
 BOOTSTRAP_CAPS = "ATTRIBUTION-PROBE:BOOTSTRAP-CAPS:NET_ADMIN12,PERFMON38,BPF39:no-SYS_ADMIN"
 EXEC_PASS = "ATTRIBUTION-PROBE:PASS:native-ELF-task-storage-one-shot-exec-admission-partial"
-EXEC_HOOKS = "ATTRIBUTION-PROBE:EXEC-HOOKS:16:allow=1:deny=15:PT_INTERP-native=1"
+EXEC_HOOKS = "ATTRIBUTION-PROBE:EXEC-HOOKS:19:allow=1:deny=18:PT_INTERP-native=1"
 EXEC_UNSUPPORTED = (
     "ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,"
     "production-exec-decision,concurrent-exec-revocation"
