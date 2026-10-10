@@ -16,7 +16,8 @@
 #      only difference allowed;
 #   2. the edit changes every role compiled from mvm's Rust workspace, so the
 #      images really are built from the checkout the override names. The
-#      QEMU/WebAssembly pack takes only a Nix helper from mvm and must not
+#      QEMU/WebAssembly pack and, at builder boot ABI 2, the builder image take
+#      only Nix helpers from mvm (the builder only `mkGuest`) and must not
 #      change;
 #   3. MVM_WORKSPACE_PATH is still refused with the override present.
 #
@@ -34,9 +35,11 @@ case "$system" in
   *) echo "unsupported system: $system" >&2; exit 2 ;;
 esac
 
-# Roles compiled from mvm's Rust workspace, then the one that is not.
+# Roles compiled from mvm's Rust workspace, then the ones that are not. The
+# builder image moved to the second list at boot ABI 2: every mvm binary it
+# runs arrives in mvmctl's boot payload, so a Rust source edit must not reach
+# it.
 rust_roles=(
-  builder-vm.default
   default-tenant.default
   rootless-tenant.default
   runtime-overlay.default
@@ -44,7 +47,7 @@ rust_roles=(
   runtime-overlay.sdk-sidecar-image-musl
   initramfs.default
 )
-helper_only_roles=(qemu-wasm.qemu-wasm-smoke-pack)
+helper_only_roles=(builder-vm.default qemu-wasm.qemu-wasm-smoke-pack)
 
 work=$(mktemp -d)
 trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT
@@ -58,7 +61,7 @@ printf '// local edit\n' >> "$work/edited/crates/mvm-agentd/src/lib.rs"
 unchanged=$(cd "$work/unchanged" && pwd -P)
 edited=$(cd "$work/edited" && pwd -P)
 
-# At boot ABI 1 the builder image bakes no mvm host binaries — the boot
+# At boot ABI 2 the builder image bakes no mvm binary — the boot
 # contract supplies them from mvmctl's payload — so every role drvPath above
 # evaluates pure; no environment and no --impure. The one exception is the
 # MVM_WORKSPACE_PATH guard check below: the flake refuses that variable

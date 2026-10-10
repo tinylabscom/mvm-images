@@ -208,14 +208,16 @@
           };
         });
 
-      # Target overlay size: 24 MiB — a hard cap for the static-musl
+      # Target overlay size: 32 MiB — a hard cap for the static-musl
       # runtime overlay plus the two GPU shim sets (glibc and musl,
       # three cdylibs each). The SDK glibc closure lives in the separate
-      # sidecar, so the overlay still stays below the old 32 MiB allocation.
+      # sidecar. The cap was 24 MiB until the guest binaries at the
+      # 514720745c mvm pin stopped fitting (mkfs ran out of blocks while
+      # copying `runner`); 32 MiB is the allocation it had before that.
       # The read-only dm-verity-sealed disk carries no ext4 journal; the build
-      # echoes the staged size so this allocation can be tightened when the
-      # shim sets shrink.
-      overlaySizeBytes = 24 * 1024 * 1024;
+      # echoes the staged size before mkfs so this allocation can be
+      # tightened against a measurement, and so an overflow names its size.
+      overlaySizeBytes = 32 * 1024 * 1024;
 
       mkSdkSidecar =
         system:
@@ -462,7 +464,7 @@
             # `mvm_build::oci_to_rootfs::ext4::materialize_to_ext4`
             # parameters — same UUID / hash_seed / block size /
             # SOURCE_DATE_EPOCH conventions. Pre-allocate the
-            # output file at the fixed budget (24 MiB) so the size
+            # output file at the fixed budget (32 MiB) so the size
             # is also part of the deterministic shape.
             #
             # `-O ^has_journal,^orphan_file` mirrors the builder VM's
@@ -471,6 +473,7 @@
             # overlay mounts read-only under dm-verity, so a journal is
             # never replayed — it only burned 1 MiB of the fixed
             # allocation and carried mkfs-version-dependent bytes.
+            echo "runtime overlay staged: $(du -s --block-size=1K "$staging" | cut -f1) KiB in 1 KiB blocks, budget ${toString (overlaySizeBytes / 1024)} KiB" >&2
             truncate -s ${toString overlaySizeBytes} $out/overlay.ext4
             SOURCE_DATE_EPOCH=0 \
               mkfs.ext4 -F \

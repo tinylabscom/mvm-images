@@ -12,9 +12,10 @@ The essential architecture is:
   release and `mvmctl` assembles it at boot
   ([tinylabscom/mvm#4100](https://github.com/tinylabscom/mvm/issues/4100)).
 - Today this repository still takes `mvm` as a pinned flake input. From it, it
-  builds the guest-runtime roles and the builder's baked `mvm-setpriv`, and
-  composes both tenant root filesystems with `mkGuest`, mvm binaries and
-  `/init` included. Removing that is
+  builds the guest-runtime roles and composes both tenant root filesystems
+  with `mkGuest`, mvm binaries and `/init` included. The builder image is
+  composed with `mkGuest` too but carries no mvm binary (builder boot ABI 2).
+  Removing that is
   [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49).
   Add no new dependency on `mvm`'s source; shrink the existing ones.
 - Base root filesystems must not carry mvm binaries or an mvm-authored

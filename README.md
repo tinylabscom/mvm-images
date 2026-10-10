@@ -26,9 +26,10 @@ measurements behind it are in
 remains. This repository takes `mvm`'s source as the `mvm` flake input, pinned
 to one exact commit in `flake.lock`, and builds from it: the guest binaries
 (compiled against `mvm`'s `Cargo.lock`), the `runtime-overlay` and `initramfs`
-roles, both SDK sidecars, the `mvm-setpriv` the builder image bakes, and both
-tenant root filesystems, which `mvm`'s `mkGuest` composes with `mvm` binaries
-and an `mvm`-authored `/init`.
+roles, both SDK sidecars, and both tenant root filesystems, which `mvm`'s
+`mkGuest` composes with `mvm` binaries and an `mvm`-authored `/init`. The
+builder image is composed with `mkGuest` too, but since builder boot ABI 2 it
+carries no `mvm` binary.
 [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49)
 removes the input and those roles, after which the base root filesystems carry
 no `mvm` binary and no `mvm`-authored `/init`. In the other direction, `mvm`'s
@@ -168,10 +169,12 @@ The three transitional roles are `mvm`'s guest runtime, built here from the
 pinned `mvm` source. They move to `mvm` under #49, but they stay in every
 published set until an `mvm` release no longer requires them: every `mvmctl`
 released so far refuses a set without them
-([tinylabscom/mvm#4105](https://github.com/tinylabscom/mvm/issues/4105)). The
-builder VM image likewise still bakes `mvm-setpriv` until builder boot ABI 2 carries it in the
-boot payload, and both tenant root filesystems still carry `mvm` binaries and
-an `mvm`-authored `/init`.
+([tinylabscom/mvm#4105](https://github.com/tinylabscom/mvm/issues/4105)). Both
+tenant root filesystems still carry `mvm` binaries and an `mvm`-authored
+`/init`. The builder VM image carries no `mvm` binary: at builder
+boot ABI 2, `mvm-host-vm-init`, `mvm-builderd` and `mvm-setpriv` all arrive in
+`mvmctl`'s boot payload
+([tinylabscom/mvm#4107](https://github.com/tinylabscom/mvm/issues/4107)).
 
 Guest architectures: `x86_64` and `aarch64`. Artifacts describe the *guest* —
 architecture, boot protocol, format, required devices — never the host
@@ -352,17 +355,16 @@ QEMU/WebAssembly outputs are under `qemu-wasm`. The kernel needs nothing from
 *Transitional: this section describes the reverse edge #49 removes.*
 
 The `mvm` binaries inside today's images — the guest agent and its helpers,
-the SDK library, the GPU shims, the `mvm-setpriv` the builder image bakes —
-are compiled from `mvm` source against `mvm`'s `Cargo.lock`. This repository
-takes `mvm` as a flake input pinned to one exact commit (`flake.nix`, recorded
-in `flake.lock`) and evaluates `mvm`'s `nix/flake.nix` from it for the guest
-package recipes and for `mkGuest`, which composes both tenant root filesystems
-and gives them their `/init`. The artifact `VERSION` is read from the pinned
-`mvm` `Cargo.toml`. Nothing tracks `mvm`'s `main`, and nothing looks for a
-checkout next to this one. [SOURCES.md](SOURCES.md) records the few files
-still copied from `mvm` and every intended difference;
-`scripts/check-source-drift.sh` fails when a copy differs from `mvm` at the
-pinned commit by anything else.
+the SDK library, the GPU shims — are compiled from `mvm` source against
+`mvm`'s `Cargo.lock`. This repository takes `mvm` as a flake input pinned to
+one exact commit (`flake.nix`, recorded in `flake.lock`) and evaluates `mvm`'s
+`nix/flake.nix` from it for the guest package recipes and for `mkGuest`, which
+composes both tenant root filesystems and gives them their `/init`. The
+artifact `VERSION` is read from the pinned `mvm` `Cargo.toml`. Nothing tracks
+`mvm`'s `main`, and nothing looks for a checkout next to this one.
+[SOURCES.md](SOURCES.md) records the few files still copied from `mvm` and
+every intended difference; `scripts/check-source-drift.sh` fails when a copy
+differs from `mvm` at the pinned commit by anything else.
 
 When #49 lands, the input, the guest-runtime roles, `sources/`, `SOURCES.md`,
 the drift and override checks and `just with-mvm` are deleted, and a
@@ -382,13 +384,11 @@ just build role=all  # equivalent named-argument spelling
 just build-all       # explicit alias; optionally accepts an architecture
 ```
 
-For a focused iteration, address one role or kernel. At boot ABI 1 the
-builder image bakes no mvm host binaries — the boot contract supplies
-`mvm-host-vm-init` and `mvm-builderd` from mvmctl's payload at boot — so
-`just builder-vm` is a plain, pure `nix build` with no toolchain or
-environment-variable dance. It still bakes `mvm-setpriv`, compiled from the
-pinned `mvm` source; builder boot ABI 2 moves that into the payload too, and
-the image then declares ABI 2 (#49).
+For a focused iteration, address one role or kernel. At boot ABI 2 the
+builder image bakes no mvm binary — the boot contract supplies
+`mvm-host-vm-init`, `mvm-builderd` and `mvm-setpriv` from mvmctl's payload at
+boot — so `just builder-vm` is a plain, pure `nix build` with no toolchain or
+environment-variable dance, and it compiles nothing from the `mvm` source.
 
 ```sh
 just list
