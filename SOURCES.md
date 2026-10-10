@@ -161,6 +161,8 @@ Every change is one of these, and nothing else.
     `images/runtime-overlay/image.nix` adds the `mvm-gpu-shims-{glibc,musl}`
     packages from the pinned mvm source, staged at `gpu/<libc>/` under the
     mount point, and the overlay budget rises 16 → 24 MiB to hold both sets.
+    It rises again to 32 MiB at the `514720745c` pin, whose guest binaries
+    no longer fit in 24.
     The guest activation puts them on the loader path only when the boot arms
     the GPU plane (`mvm.gpu=1`), so an ordinary guest never picks the shim up
     and never dials a GPU endpoint that does not exist. mvm's own copy of the
