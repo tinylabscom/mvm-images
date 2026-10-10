@@ -134,10 +134,11 @@ struct {
     __type(key, int);
     __type(value, struct server_snapshot);
 } server_tags SEC(".maps");
-/* bind-tag, bind-deny, accept-tag, accept-deny, server-send, server-deny. */
+/* bind-tag, bind-deny, accept-tag, accept-deny, server-send, server-deny,
+ * fixture peer connect allowed/denied. Earlier counter keys are unchanged. */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 6);
+    __uint(max_entries, 8);
     __type(key, __u32);
     __type(value, __u64);
 } server_witness SEC(".maps");
@@ -261,9 +262,26 @@ int BPF_PROG(server_accept, struct sock *listener, struct proto_accept_arg *arg,
     return 0;
 }
 
+/* Fixture-only direct endpoints, not the production private redirect guard.
+ * The actual connecting task and actual sockaddr must match the live lease. */
+static __always_inline int server_peer(struct bpf_sock_addr *ctx, int loopback)
+{
+    __u64 port = bpf_ntohs(ctx->user_port);
+    struct server_snapshot *lease = bpf_map_lookup_elem(&port_leases, &port);
+    struct admission *a = current_admission();
+    int allow = loopback && ctx->type == 1 && ctx->protocol == 6 &&
+                lease && lease->role == 2 && lease->port == port &&
+                bpf_get_current_cgroup_id() == lease->cgroup &&
+                a && a->generation == lease->generation && server_live(lease);
+    server_count(allow ? 6 : 7);
+    return allow;
+}
+
 SEC("cgroup/connect4")
 int connect4(struct bpf_sock_addr *ctx)
 {
+    if (ctx->user_port == bpf_htons(904) || ctx->user_port == bpf_htons(905))
+        return server_peer(ctx, ctx->user_ip4 == bpf_htonl(0x7f000001));
     if (ctx->user_port == bpf_htons(900) || ctx->user_port == bpf_htons(901)) {
         count(9);
         return 0;
@@ -282,6 +300,9 @@ int connect4(struct bpf_sock_addr *ctx)
 SEC("cgroup/connect6")
 int connect6(struct bpf_sock_addr *ctx)
 {
+    if (ctx->user_port == bpf_htons(904) || ctx->user_port == bpf_htons(905))
+        return server_peer(ctx, !ctx->user_ip6[0] && !ctx->user_ip6[1] &&
+                           !ctx->user_ip6[2] && ctx->user_ip6[3] == bpf_htonl(1));
     if (ctx->user_port == bpf_htons(900) || ctx->user_port == bpf_htons(901)) {
         count(10);
         return 0;

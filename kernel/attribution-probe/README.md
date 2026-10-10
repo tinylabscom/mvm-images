@@ -375,11 +375,16 @@ loader. Original socket/bridge unsupported claims remain in force.
 `server.c` is included by the existing probe and runs **after every earlier
 socket, private-bridge and exec suite**, their original markers and original
 counter log. There are no recipe, configuration, image-lock or runtime changes.
-The new exact six-counter `server_witness` array does not resize the original
+The exact eight-counter `server_witness` array does not resize the original
 13-counter socket/bridge array or the three-counter exec array. New client
 operations update the old expected counters incrementally; all arrays are
 checked after every pipe acknowledgment. Pipes, rather than additional
 infrastructure-labelled sockets, coordinate these scenarios.
+Keys 0–5 retain exact totals `12,4,4,8,6,6`; new fixture-connect keys 6/7
+have exact totals `6,4` (three admitted and two denied attempts per family).
+Denied connects still create one earlier socket snapshot in the socket-connect
+LSM before cgroup denial; those four increments are explicitly expected.
+No accept tag or server SEND counter may change during a denied peer attempt.
 
 ### Field ABI and trust boundary
 
@@ -427,11 +432,34 @@ ID, FD lookup or scan identifies a kernel socket.
   client SEND label. No broad UID, root or INET exemption was introduced.
   Lease-map mutation/deletion is not consulted at accept or SEND.
 
+* For **fixture-only direct endpoints 904/905**, connect4/6 checks the actual
+  sockaddr is exact IPv4/IPv6 loopback TCP, the lease has role 2 and matching
+  port, the actual `bpf_get_current_cgroup_id()` equals the lease cgroup, and
+  its valid active admission generation equals the lease generation. This is
+  the peer-association proof, not merely a single-invocation echo. It does not
+  replace the earlier production-shaped root direct-deny/own-leaf redirect
+  guard for 900/901, nor prove host FlowMux peer association.
+
+**Trusted allocator ordering is mandatory:** never reassign a port to another
+invocation while the previous target remains active or its old listener can
+confer authority. First retire the old admission, close/drain its listeners
+and connections, then publish a new lease/admission and fresh listener.
+Accept and SEND intentionally cannot detect a mutable-map reassignment to B
+while A remains live: violating this ordering can authorize B's connection
+under A's captured listener. This fixture does not implement a production
+allocator or establish nonreuse. The generation-only mutation below is a
+deliberate snapshot test, not authorization for cross-invocation reassignment.
+
 ### Required actual-kernel scenarios, both IPv4 and IPv6
 
 1. Bind with generation 1 and wait for the server's real `getsockname` readiness.
-   Replace **only the mutable port lease** with generation 2, while the
-   invocation remains generation 1. An actual UID-902 client sends `Q`, the
+   Independently activate B with the **same numeric generation** as A.
+   B's actual connect to A's port must return exactly EPERM, increment the
+   connect-deny hook counter, receive no DATA (ENOTCONN), and leave the server's
+   nonblocking accept at EAGAIN. A same-owner/wrong-lease-generation connect
+   must likewise fail. Restore generation 1 and connect A successfully.
+   Then replace **only the mutable port lease** with generation 2, while the
+   invocation remains generation 1. The actual UID-902 client sends `Q`, the
    server accepts, reads it, sends the exact echo, and the client reads it.
    This must use the captured generation-1 listener, not the current port map.
 2. Hold that same accepted server FD. Retire the invocation, then activate

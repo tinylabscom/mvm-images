@@ -10,7 +10,8 @@ _Static_assert(sizeof(struct server_snapshot) == 32 &&
                offsetof(struct server_snapshot, port) == 16 &&
                offsetof(struct server_snapshot, role) == 24, "server snapshot ABI");
 enum { SERVER_BIND, SERVER_BIND_DENY, SERVER_ACCEPT, SERVER_ACCEPT_DENY,
-       SERVER_SEND, SERVER_SEND_DENY, SERVER_COUNTERS };
+       SERVER_SEND, SERVER_SEND_DENY, SERVER_PEER_ALLOW, SERVER_PEER_DENY,
+       SERVER_COUNTERS };
 static int server_witnesses, server_exec_witnesses;
 static uint64_t server_expected[SERVER_COUNTERS];
 static uint64_t server_exec_baseline[3];
@@ -162,7 +163,11 @@ static int server_fixture(int family, int port, int mode, int uid)
         server_read(3, &cmd, sizeof(cmd));
         if (cmd.op == 'X')
             break;
-        if (cmd.op == 'A' || cmd.op == 'Z') {
+        if (cmd.op == 'P') {
+            CHECK(fcntl(listener, F_SETFL, O_NONBLOCK) == 0);
+            CHECK(accept4(listener, NULL, NULL, SOCK_CLOEXEC) == -1 && errno == EAGAIN);
+            CHECK(fcntl(listener, F_SETFL, 0) == 0);
+        } else if (cmd.op == 'A' || cmd.op == 'Z') {
             if (accepted >= 0) close(accepted);
             accepted = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
             CHECK(accepted >= 0 && server_port(accepted, family) == actual_port);
@@ -190,10 +195,21 @@ static int server_fixture(int family, int port, int mode, int uid)
 static int server_client(int family, int port, int uid)
 {
     alarm(20);
+    bool denied = uid < 0; /* Trusted exec argument, not peer identity evidence. */
+    if (denied) uid = -uid;
     server_identity_check(uid, false);
     int fd = server_socket(family);
     struct sockaddr_storage ss;
     socklen_t len = server_address(family, port, false, &ss);
+    if (denied) {
+        CHECK(connect(fd, (void *)&ss, len) == -1 && errno == EPERM);
+        char byte;
+        CHECK(recv(fd, &byte, 1, MSG_DONTWAIT) == -1 && errno == ENOTCONN);
+        int ready = 0;
+        server_write(4, &ready, sizeof(ready));
+        close(fd);
+        return 0;
+    }
     CHECK(connect(fd, (void *)&ss, len) == 0);
     int ready = port;
     server_write(4, &ready, sizeof(ready));
@@ -277,7 +293,10 @@ static void server_stop(struct server_child *child)
 static struct server_child server_connect(int family, int port, int uid, bool unbound)
 {
     struct server_child child = server_launch(family, port, 0, uid, true, unbound);
-    expected[family == AF_INET ? CONNECT4 : CONNECT6]++;
+    if (port == 904 || port == 905)
+        server_expected[SERVER_PEER_ALLOW]++;
+    else
+        expected[family == AF_INET ? CONNECT4 : CONNECT6]++;
     expected[SNAPSHOT]++;
     server_exact("server-client-connect");
     return child;
@@ -308,9 +327,31 @@ static void server_family(int family, uint64_t port, uint64_t cg, int map, int l
     struct server_child server = server_launch(family, port, 0, 989, false, false);
     server_expected[SERVER_BIND]++;
     server_exact("listener-ready-before-activation");
-    /* Port-map replacement alone must NOT change the already captured label. */
+    /* Two independently active invocations: B cannot reach A's listener. */
+    struct stat peer_st;
+    CHECK(stat(SERVER_UNBOUND, &peer_st) == 0);
+    uint64_t peer_cg = peer_st.st_ino;
+    struct admission peer = { .label = 52, .generation = 1, .active = 1 };
+    CHECK(peer_cg != cg && bpf_map_update_elem(map, &peer_cg, &peer, BPF_NOEXIST) == 0);
+    struct server_child denied = server_launch(family, port, 0, -902, true, true);
+    server_expected[SERVER_PEER_DENY]++;
+    expected[SNAPSHOT]++; /* socket_connect LSM precedes cgroup denial. */
+    wait_ok(denied.pid); close(denied.to); close(denied.from);
+    server_exact("active-B-to-A-exact-EPERM-no-DATA");
+    server_command(&server, 'P', 0, -1);
+    CHECK(bpf_map_delete_elem(map, &peer_cg) == 0);
+    /* Same owner but wrong lease generation must also fail in connect hook. */
     server_lease(leases, cg, 2, port);
+    denied = server_launch(family, port, 0, -902, true, false);
+    server_expected[SERVER_PEER_DENY]++;
+    expected[SNAPSHOT]++;
+    wait_ok(denied.pid); close(denied.to); close(denied.from);
+    server_exact("same-owner-wrong-lease-generation-exact-EPERM");
+    server_command(&server, 'P', 0, -1);
+    server_lease(leases, cg, 1, port);
     struct server_child client = server_connect(family, port, 902, false);
+    /* Mutate only AFTER connect admission: accept uses captured gen1. */
+    server_lease(leases, cg, 2, port);
     server_data(&client, &server, true);
     server_command(&server, 'S', 0, SERVER_SEND);
     server_command(&client, 'R', 0, -1);
@@ -320,6 +361,7 @@ static void server_family(int family, uint64_t port, uint64_t cg, int map, int l
     server_command(&client, 'N', 0, -1);
     live.active = 1; live.generation = 2;
     CHECK(bpf_map_update_elem(map, &cg, &live, BPF_EXIST) == 0);
+    server_lease(leases, cg, 2, port); /* Only after old generation retired. */
     server_command(&server, 'S', EPERM, SERVER_SEND_DENY);
     server_command(&client, 'N', 0, -1);
     server_stop(&client);
@@ -412,7 +454,7 @@ static void server_probe(struct bpf_object *obj, int map)
     server_exact("server-hooks-ready");
     server_family(AF_INET, 904, cg, map, leases);
     server_family(AF_INET6, 905, cg, map, leases);
-    const uint64_t totals[SERVER_COUNTERS] = { 12, 4, 4, 8, 6, 6 };
+    const uint64_t totals[SERVER_COUNTERS] = { 12, 4, 4, 8, 6, 6, 6, 4 };
     CHECK(!memcmp(server_expected, totals, sizeof(totals)));
     for (uint32_t key = 0; key < SERVER_COUNTERS; key++)
         dprintf(1, "ATTRIBUTION-PROBE:SERVER-WITNESS:%u=%llu\n",

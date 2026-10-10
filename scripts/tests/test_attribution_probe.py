@@ -304,7 +304,7 @@ class ProbeTests(unittest.TestCase):
     def test_server_fexit_has_pinned_two_argument_abi_and_no_mutable_lease_read(self):
         bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
         accept = bpf.split('SEC("fexit/inet_csk_accept")', 1)[1].split(
-            'SEC("cgroup/connect4")', 1)[0]
+            "\n}", 1)[0]
         self.assertIn(
             "struct sock *listener, struct proto_accept_arg *arg,\n"
             "             struct sock *accepted", accept)
@@ -343,7 +343,35 @@ class ProbeTests(unittest.TestCase):
         # Adding the server map must not resize either preceding counter map.
         self.assertIn("__uint(max_entries, 13);", bpf)
         self.assertIn("__uint(max_entries, 3);", bpf)
-        self.assertIn("__uint(max_entries, 6);", bpf)
+        self.assertIn("__uint(max_entries, 8);", bpf)
+
+    def test_server_connect_requires_actual_peer_and_generation(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        peer = bpf.split("int server_peer(", 1)[1].split('SEC("cgroup/connect4")', 1)[0]
+        for contract in (
+            "bpf_get_current_cgroup_id() == lease->cgroup",
+            "a && a->generation == lease->generation", "server_live(lease)",
+            "lease->role == 2", "lease->port == port",
+            "loopback && ctx->type == 1 && ctx->protocol == 6",
+            "server_count(allow ? 6 : 7)",
+        ):
+            self.assertIn(contract, peer)
+        for family in ("4", "6"):
+            connect = bpf.split(f"int connect{family}(", 1)[1].split("\n}", 1)[0]
+            self.assertIn("bpf_htons(904)", connect)
+            self.assertIn("bpf_htons(905)", connect)
+            self.assertIn("return server_peer(ctx,", connect)
+        server = (ROOT / "kernel/attribution-probe/server.c").read_text()
+        for contract in (
+            "peer_cg != cg", ".label = 52, .generation = 1, .active = 1",
+            "server_launch(family, port, 0, -902, true, true)",
+            "server_launch(family, port, 0, -902, true, false)",
+            "connect(fd, (void *)&ss, len) == -1 && errno == EPERM",
+            "errno == ENOTCONN", "server_command(&server, 'P', 0, -1)",
+            "accept4(listener, NULL, NULL, SOCK_CLOEXEC) == -1 && errno == EAGAIN",
+            "expected[SNAPSHOT]++; /* socket_connect LSM precedes cgroup denial. */",
+        ):
+            self.assertIn(contract, server)
 
     def test_server_real_echo_revocation_failed_bind_and_normal_gap_are_mandatory(self):
         server = (ROOT / "kernel/attribution-probe/server.c").read_text()
@@ -369,7 +397,7 @@ class ProbeTests(unittest.TestCase):
             "SYS_close_range, 5, ~0U, 0", "server_zero_identity(uid)",
             "egress_privileges()", "exact_cap_mask(bind_cap",
             "if (value != server_expected[key])",
-            "{ 12, 4, 4, 8, 6, 6 }",
+            "{ 12, 4, 4, 8, 6, 6, 6, 4 }",
         ):
             self.assertIn(contract, server)
         self.assertNotIn("SCM_RIGHTS", server)
