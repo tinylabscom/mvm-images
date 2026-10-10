@@ -1,4 +1,4 @@
-# Development TCP lifecycle and egress-label bridge — not production semantics
+# Development TCP lifecycle, egress-label bridge and accepted-server proof
 
 This image-owned development guest extends the connect4/connect6 and
 `file_receive` partial pass from [run 37987291610](https://github.com/tinylabscom/mvm-images/actions/runs/37987291610)
@@ -6,7 +6,9 @@ at `305fb49` with socket-label generation and actual-use/revocation gates on
 experimental Linux **6.12.111**. The earlier run does **not** establish these
 new gates. The lifecycle extension at `536e20c` subsequently passed both
 architectures in [run 37992460204](https://github.com/tinylabscom/mvm-images/actions/runs/37992460204).
-That run does **not** establish the bridge gates added here. It is not PS13
+That run does **not** establish the bridge gates added here. The native
+exec/socket/private-bridge baseline at `2c9132a` passed both architectures;
+that evidence does **not** establish the accepted-server gates below. It is not PS13
 completion and **must not be integrated into
 production** on the strength of a partial-pass marker. No `mvm` checkout,
 binary, runtime, overlay, manifest or image lock participates. No production
@@ -107,7 +109,7 @@ sends, and zero other hook changes. EPERM alone cannot count as hook evidence.
 The main watchdog is 60 seconds; each executed tool has a 20-second watchdog.
 PID 1 failures exit/panic and emit `ATTRIBUTION-PROBE:FAIL:...` with errno.
 The host enforces an independent timeout and requires a clean VMM exit and all
-seven exact markers (the earlier PASS markers are preserved):
+thirteen exact markers (the earlier PASS markers are preserved):
 
 ```text
 ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial
@@ -256,10 +258,11 @@ checks. The child drops its permitted/effective mask and exits before tools;
 each tool independently drops all capabilities, and egress never receives
 bootstrap capabilities.
 
-Accepted TCP sockets are **read-only fixtures**: the egress does not send on
-them or mark them as infrastructure. There is no broad uid-989/INET SEND
-exemption. Bidirectional proxy behavior, production claims, executable identity,
-host FlowMux, snapshot/restore and production slot reuse are not proved.
+Accepted TCP sockets in this **earlier bridge phase** are read-only fixtures:
+the egress does not send on them or mark them as infrastructure. There is no
+broad uid-989/INET SEND exemption. The separate accepted-server phase below
+tests narrow private TCP echo, not full bidirectional proxy behavior,
+production claims, host FlowMux, snapshot/restore or production slot reuse.
 
 ## Bounded native ELF exec admission
 
@@ -367,18 +370,165 @@ device reuse across restored snapshots, or synchronize concurrent revocation.
 The root fixture is trusted bootstrap/test infrastructure, not a production
 loader. Original socket/bridge unsupported claims remain in force.
 
+## Bounded accepted-server fexit proof — activation still forbidden
+
+`server.c` is included by the existing probe and runs **after every earlier
+socket, private-bridge and exec suite**, their original markers and original
+counter log. There are no recipe, configuration, image-lock or runtime changes.
+The new exact six-counter `server_witness` array does not resize the original
+13-counter socket/bridge array or the three-counter exec array. New client
+operations update the old expected counters incrementally; all arrays are
+checked after every pipe acknowledgment. Pipes, rather than additional
+infrastructure-labelled sockets, coordinate these scenarios.
+
+### Field ABI and trust boundary
+
+The separate `port_leases` HASH has **native-endian u64 port keys**, capacity
+two, and native-endian `{u64 cgroup, generation, port, role}` values (32 bytes,
+offsets 0/8/16/24). Port is **host order**. `server_tags` is a separate
+`BPF_MAP_TYPE_SK_STORAGE`, `BPF_F_NO_PREALLOC`, int FD keys for userspace and
+the same 32-byte value. Role **2** is an immutable listener snapshot; role
+**1** is an accepted-socket snapshot. The old `socket_labels` ABI is unchanged.
+Here `cgroup` identifies the admitted **client invocation**, not the separate
+egress worker's cgroup. The server checks the active record at the captured
+invocation ID, and requires its generation to match exactly. No caller-supplied
+ID, FD lookup or scan identifies a kernel socket.
+
+* Trusted PID 1 installs a lease for a fresh protected test port **904/905**,
+  strictly below the existing privileged-port cutoff 1024. The real separately
+  executed **UID/GID 989** server has only `CAP_NET_BIND_SERVICE`, exactly
+  checked across effective/permitted/inheritable/bounding/ambient sets.
+  Clients are separately executed UID **902/GID 907** or **1000/GID 1000**
+  with zero capabilities, in a fresh sealed invocation cgroup. All map, link,
+  cgroup and TCP FDs are closed before exec; only standard streams and two
+  coordination pipes remain. All TCP sockets are created inside the actual
+  executing process after privilege drop. No TCP FD transfer is used.
+* `lsm.s/socket_bind` creates a listener snapshot only for actual UID 989,
+  exact requested 127.0.0.1/::1, TCP stream, one of the two protected ports,
+  a role-2 lease whose stored port matches its key and a live invocation
+  generation. A bind retry cannot overwrite an old snapshot.
+* This LSM runs **before kernel bind succeeds**. A snapshot is not a bind
+  success certificate. The new guard is restricted to 904/905; previous
+  900/901 private-bind tests retain exactly **EACCES**. New wrong-UID or
+  missing-lease attempts on 904/905 get exactly **EPERM** from the BPF guard
+  before the kernel capability check. These are different, explicitly scoped
+  contracts, not a relaxation of any earlier test.
+* `fexit/inet_csk_accept` reads only the listener's SK_STORAGE and the
+  invocation's live generation, **never `port_leases`**. It requires actual
+  listener `TCP_LISTEN=10`, actual TCP stream/local host-order port/exact
+  loopback family/address matching the snapshot, a nonnull actual returned
+  socket, the same family and actual local tuple on that accepted socket,
+  and `TCP_ESTABLISHED=1`. It creates role-1 storage on that actual returned
+  sock before kernel userspace FD publication, not on a guessed FD or the
+  uninitialized `socket_accept` argument. Existing storage is not overwritten.
+* SEND with a server snapshot is allowed only for actual UID 989, **role 1**,
+  live captured invocation/generation and the actual TCP/local loopback tuple
+  in ESTABLISHED state. A listener-role tag cannot fall through to an ordinary
+  client SEND label. No broad UID, root or INET exemption was introduced.
+  Lease-map mutation/deletion is not consulted at accept or SEND.
+
+### Required actual-kernel scenarios, both IPv4 and IPv6
+
+1. Bind with generation 1 and wait for the server's real `getsockname` readiness.
+   Replace **only the mutable port lease** with generation 2, while the
+   invocation remains generation 1. An actual UID-902 client sends `Q`, the
+   server accepts, reads it, sends the exact echo, and the client reads it.
+   This must use the captured generation-1 listener, not the current port map.
+2. Hold that same accepted server FD. Retire the invocation, then activate
+   generation 2. Each synchronized server SEND must return **exactly EPERM**,
+   add exactly one server-deny count and deliver no peer data (`EAGAIN`).
+   There is no concurrent/in-flight revocation claim.
+3. Connect a UID-1000 client to the still-old generation-1 listener under the
+   generation-2 lease and admission. Accept must **not** acquire a fresh tag:
+   exactly one accept-deny, followed by exactly EPERM on the unlabelled actual
+   private accepted socket and no peer data.
+4. A fresh listener without a fresh lease must get EPERM. Install the
+   generation-2 lease, create a fresh listener and wait for its ready source.
+   Fresh client DATA and echo succeed. Delete the mutable lease and send a
+   second real reply on the held accepted FD: it still succeeds under the
+   live captured generation. This proves this bounded immutable-generation
+   rule, **not production port reuse**.
+5. Wrong UID 1000 attempting the leased protected server bind gets EPERM.
+   Separately, UID 989 **without** the bind capability reaches the kernel
+   private bind permission check and gets EACCES **after** the listener tag
+   was created. On that same socket, exercise `listen` autobind, explicit
+   port-zero loopback rebind, and port-zero wildcard-address rebind. Each
+   resulting real listener accepts client DATA, but cannot confer SEND
+   authority: exact accept-deny, server EPERM, no peer data. This witnesses
+   actual tuple checks, not a pretend successful bind.
+6. On another failed-private-bind-tagged socket, connect as a normal client
+   to actual 1080. Its old normal-client label must not override role 2:
+   SEND is exactly EPERM and the actual accepted peer observes EAGAIN.
+7. Exercise the **exact ordinary unbound 1080 server shape**: an unadmitted
+   UID-1000 client sends DATA with the existing zero-label/zero-generation
+   normal client rule. Actual UID-989 server accepts it but cannot SEND a
+   reply: it has no scoped server authority, so exact EPERM/no peer DATA is
+   required. **This is an explicit runtime interface gap, not compatibility
+   or a full production handler. Do not activate this policy as a normal
+   proxy implementation.**
+
+The required additional exact markers are:
+
+```text
+ATTRIBUTION-PROBE:SERVER-HOOKS:bind=12:bind-deny=4:accept=4:accept-deny=8:send=6:send-deny=6
+ATTRIBUTION-PROBE:PASS:accepted-server-fexit-generation-bidirectional-private-partial
+ATTRIBUTION-PROBE:UNSUPPORTED:normal1080-server-SEND,production-server-handler,host-FlowMux,concurrent-server-revocation,production-port-reuse
+```
+
+The new map totals are `{12,4,4,8,6,6}` in bind-tag/bind-deny/accept-tag/
+accept-deny/server-send/server-deny order. Unlabelled accepted SEND denials
+remain in the old SEND_DENY counter. After the preserved baseline counter
+log, the new clients add exactly connect4/connect6 **8/8**, snapshots **16**,
+client sends **14** and unlabelled accepted SEND denials **10**; every other
+old counter remains unchanged. Exact per-operation checks prevent one
+scenario's missing hook from being hidden by another's extra calls.
+
+### Pinned Linux 6.12.111 legality — source is not verifier proof
+
+The verified upstream
+[`inet_csk_accept`](https://github.com/gregkh/linux/blob/v6.12.111/net/ipv4/inet_connection_sock.c#L648)
+signature is **`struct sock *inet_csk_accept(struct sock *sk,
+struct proto_accept_arg *arg)`**: two arguments plus the return value.
+The `BPF_PROG` fexit declaration uses listener, arg and returned sock, so
+the return is **`ctx[2]`**, never the retired four-argument ABI's `ctx[4]`.
+The function checks TCP_LISTEN and returns `newsk`; the outer accept path
+grafts that result into the new socket before publishing the FD.
+
+[`bpf_lsm.c`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/bpf/bpf_lsm.c#L286)
+lists `bpf_lsm_socket_bind` in `sleepable_lsm_hooks` (line 361), which is why
+the new bind section is **`lsm.s/socket_bind`**. This is an actual pinned
+source check, not an assumption copied from the existing connect hook.
+[`bpf_trace.c`](https://github.com/gregkh/linux/blob/v6.12.111/kernel/trace/bpf_trace.c#L1969)
+exposes `bpf_sk_storage_get_tracing_proto` to tracing programs.
+[`bpf_sk_storage.c`](https://github.com/gregkh/linux/blob/v6.12.111/net/core/bpf_sk_storage.c#L411)
+types its socket argument as `ARG_PTR_TO_BTF_ID_OR_NULL` with the socket BTF ID;
+the LSM helper uses `ARG_PTR_TO_BTF_ID_SOCK_COMMON`. Direct CO-RE sock pointers
+are used, not scalar probe-read casts.
+
+**Only real load/attach and execution on both pinned-kernel architectures
+can establish helper/verifier legality, return-pointer typing, CO-RE
+relocation, hook ordering, pre-FD tagging and exact counters.** Missing helper,
+invalid attach/ABI or verifier rejection aborts the guest; there is no fallback.
+Native Python and scratch Linux cross-object builds are source/compile checks,
+not this kernel proof. The parent owns Linux CI and Git; this implementation
+does not watch/retry CI, build Nix on macOS, or activate any runtime candidate.
+No host FlowMux, overhead measurement, concurrent race guarantee, snapshot
+reuse or reuse beyond the captured-generation fixtures is claimed.
+
 ## Explicitly unsupported, even after partial PASS
 
 * Concurrent teardown/in-flight syscall races, cgroup-ID wraparound, generation
-  wraparound, socket cloning and accepted-socket ownership policy. The bounded
+  wraparound, socket cloning and general accepted-socket ownership policy. The bounded
   TCP inheritance fixture is not a complete production FD inheritance policy.
 * ptrace attacks beyond the tested nondumpable sibling access checks, enabled
   io_uring, non-socket SCM transfers, UDP, and transports other than this TCP
   loopback probe. Socket receive remains blanket-denied even within invocation.
 * **Production EGRESS BRIDGE remains open.** This bounded private-listener
   cgroup-connect redirect is a development-only accepted-binding fixture.
-  Bidirectional proxy/connector behavior and production runtime integration
-  remain absent; the test control socketpair is not a product protocol.
+  Full bidirectional proxy/connector behavior (including normal 1080 server
+  responses) and production runtime integration remain absent; narrow private
+  echo is only an additional proof gate, and test control channels are not a
+  product protocol.
 * Claim protocol, an authenticated connector, external networking, and actual
   executable identity/content inspection. The 0551/nondumpable test establishes
   **cgroup observability**, not executable attestation.

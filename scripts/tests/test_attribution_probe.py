@@ -35,7 +35,8 @@ class ProbeTests(unittest.TestCase):
         markers = (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
                    boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
                    boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED,
-                   boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED)
+                   boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED,
+                   boot.SERVER_PASS, boot.SERVER_HOOKS, boot.SERVER_UNSUPPORTED)
         good = "\r\n".join(markers) + "\r\n"
         boot.validate_output(good, 0)
         for output, code in [
@@ -76,11 +77,13 @@ class ProbeTests(unittest.TestCase):
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
         bridge = (ROOT / "kernel/attribution-probe/bridge.c").read_text()
         execute = (ROOT / "kernel/attribution-probe/exec.c").read_text()
+        server = (ROOT / "kernel/attribution-probe/server.c").read_text()
         for marker in (boot.PASS, boot.LIFECYCLE_PASS, boot.BRIDGE_PASS,
                        boot.BRIDGE_CAPACITY, boot.BOOTSTRAP_CAPS,
                        boot.BRIDGE_UNSUPPORTED, boot.UNSUPPORTED,
-                       boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED):
-            self.assertIn(f'"{marker}\\n"', init + bridge + execute)
+                       boot.EXEC_PASS, boot.EXEC_HOOKS, boot.EXEC_UNSUPPORTED,
+                       boot.SERVER_PASS, boot.SERVER_HOOKS, boot.SERVER_UNSUPPORTED):
+            self.assertIn(f'"{marker}\\n"', init + bridge + execute + server)
         for unsupported in ("production-egress-bridge", "claim-protocol",
                             "verifier-faults", "exec-identity",
                             "concurrent-teardown", "non-TCP"):
@@ -101,8 +104,11 @@ class ProbeTests(unittest.TestCase):
             self.assertIn(contract, bpf)
         self.assertNotIn('SEC("lsm.s/socket_connect")', bpf)
         self.assertNotIn("BPF_CORE_READ(socket", bpf)
-        self.assertNotIn("bpf_get_current_uid_gid", bpf)
-        self.assertEqual(bpf.count("if (ret)\n        return ret;"), 4)
+        # UID is never an exemption for the old client ownership/generation rule.
+        connect = bpf.split('SEC("lsm/socket_connect")', 1)[1].split(
+            'SEC("lsm.s/socket_sendmsg")', 1)[0]
+        self.assertNotIn("bpf_get_current_uid_gid", connect)
+        self.assertEqual(bpf.count("if (ret)\n        return ret;"), 5)
 
     def test_real_api_matrix_and_exact_counters_are_required(self):
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
@@ -294,6 +300,86 @@ class ProbeTests(unittest.TestCase):
             "bpf_map_delete_elem(permits, &pidfd)",
         ):
             self.assertIn(contract, execute)
+
+    def test_server_fexit_has_pinned_two_argument_abi_and_no_mutable_lease_read(self):
+        bpf = (ROOT / "kernel/attribution-probe/probe.bpf.c").read_text()
+        accept = bpf.split('SEC("fexit/inet_csk_accept")', 1)[1].split(
+            'SEC("cgroup/connect4")', 1)[0]
+        self.assertIn(
+            "struct sock *listener, struct proto_accept_arg *arg,\n"
+            "             struct sock *accepted", accept)
+        self.assertNotIn("port_leases", accept)
+        for contract in (
+            "bpf_sk_storage_get(&server_tags, listener, 0, 0)",
+            "listener->__sk_common.skc_state != 10", "!accepted",
+            "!server_tuple(listener, s)", "!server_tuple(accepted, s)",
+            "accepted->__sk_common.skc_state != 1", "initial.role = 1",
+            "!server_live(s)", "BPF_SK_STORAGE_GET_F_CREATE",
+        ):
+            self.assertIn(contract, accept)
+        self.assertNotIn("bpf_probe_read_kernel", accept)
+        self.assertNotIn("socket_accept", accept.split("int BPF_PROG", 1)[1])
+        bind = bpf.split('SEC("lsm.s/socket_bind")', 1)[1].split(
+            "struct proto_accept_arg;", 1)[0]
+        for contract in (
+            "(__u32)bpf_get_current_uid_gid() != 989", "lease->role != 2",
+            "lease->port != port", "!server_live(lease)", "!loopback",
+            "old->generation == lease->generation", "struct server_snapshot initial = *lease",
+        ):
+            self.assertIn(contract, bind)
+        send = bpf.split('SEC("lsm.s/socket_sendmsg")', 1)[1].split(
+            'SEC("lsm.s/file_receive")', 1)[0]
+        for contract in (
+            "(__u32)bpf_get_current_uid_gid() == 989 && server->role == 1",
+            "server_live(server) && server_tuple(sk, server)",
+            "server_count(allow ? 4 : 5)", "return allow ? 0 : -1",
+        ):
+            self.assertIn(contract, send)
+        self.assertNotIn("port_leases", send)
+        self.assertIn("__u64 cgroup, generation, port, role;", bpf)
+        self.assertIn("sk->__sk_common.skc_num != s->port", bpf)
+        self.assertIn("sk->sk_type != 1 || sk->sk_protocol != 6", bpf)
+        self.assertIn("skc_v6_rcv_saddr", bpf)
+        # Adding the server map must not resize either preceding counter map.
+        self.assertIn("__uint(max_entries, 13);", bpf)
+        self.assertIn("__uint(max_entries, 3);", bpf)
+        self.assertIn("__uint(max_entries, 6);", bpf)
+
+    def test_server_real_echo_revocation_failed_bind_and_normal_gap_are_mandatory(self):
+        server = (ROOT / "kernel/attribution-probe/server.c").read_text()
+        init = (ROOT / "kernel/attribution-probe/init.c").read_text()
+        self.assertLess(init.index("exec_probe(obj)"), init.index("server_probe(obj, map)"))
+        self.assertLess(init.index("ATTRIBUTION-PROBE:WITNESS:"), init.index("server_probe(obj, map)"))
+        for contract in (
+            "server_family(AF_INET, 904", "server_family(AF_INET6, 905",
+            "bpf_program__attach_trace(p)", "accept4(listener", "getsockname(fd,",
+            "server_lease(leases, cg, 2, port)", "live.active = 0",
+            "live.active = 1; live.generation = 2",
+            "server_connect(family, port, 902, false)",
+            "server_connect(family, port, 1000, false)",
+            "server_connect(family, 1080, 1000, true)",
+            "server_command(&server, 'S', EPERM, SERVER_SEND_DENY)",
+            "server_command(&server, 'S', EPERM, -1)",
+            "server_command(&client, 'R', 0, -1)", "byte == 'Q'",
+            "mode == 2 || mode == 3", "mode == 4", "mode == 5 || mode == 7",
+            "bind(listener, (void *)&ss, len) == -1 && errno == EACCES",
+            "bind(listener, (void *)&ss, len) == -1 && errno == EPERM",
+            "listen(listener, 8)", "CHECK(server.port != (int)port)",
+            "recv(accepted, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN",
+            "SYS_close_range, 5, ~0U, 0", "server_zero_identity(uid)",
+            "egress_privileges()", "exact_cap_mask(bind_cap",
+            "if (value != server_expected[key])",
+            "{ 12, 4, 4, 8, 6, 6 }",
+        ):
+            self.assertIn(contract, server)
+        self.assertNotIn("SCM_RIGHTS", server)
+        self.assertNotIn("value >=", server)
+        # Deletion of lease does not alter an already captured/live SEND tag.
+        deletion = server.index("CHECK(bpf_map_delete_elem(leases, &port) == 0);",
+                                server.index('"fresh-lease-listener-ready"'))
+        self.assertLess(deletion, server.index(
+            "server_command(&server, 'S', 0, SERVER_SEND);", deletion))
+        self.assertIn("normal1080-server-SEND", boot.SERVER_UNSUPPORTED)
 
 
 if __name__ == "__main__":

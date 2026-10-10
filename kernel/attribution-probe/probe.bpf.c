@@ -25,11 +25,14 @@ struct linux_binprm {
 struct task_struct;
 struct sock_common {
     __u16 skc_family, skc_dport;
-    __u32 skc_daddr;
-    struct in6_addr skc_v6_daddr;
+    __u16 skc_num;
+    unsigned char skc_state;
+    __u32 skc_daddr, skc_rcv_saddr;
+    struct in6_addr skc_v6_daddr, skc_v6_rcv_saddr;
 } __attribute__((preserve_access_index));
 struct sock {
     struct sock_common __sk_common;
+    __u16 sk_type, sk_protocol;
 } __attribute__((preserve_access_index));
 struct socket {
     struct sock *sk;
@@ -110,6 +113,151 @@ static __always_inline int normal_destination(struct sock *sk)
         return !addr.s6_addr32[0] && !addr.s6_addr32[1] && !addr.s6_addr32[2] &&
                addr.s6_addr32[3] == bpf_htonl(1);
     }
+    return 0;
+}
+
+/* Isolated development server ABI: every field is a native-endian u64.
+ * The port key and snapshot port are HOST order, unlike skc_dport.
+ * Neither the old client storage ABI nor its counter array changes. */
+struct server_snapshot {
+    __u64 cgroup, generation, port, role;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 2);
+    __type(key, __u64);
+    __type(value, struct server_snapshot);
+} port_leases SEC(".maps");
+struct {
+    __uint(type, BPF_MAP_TYPE_SK_STORAGE);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+    __type(key, int);
+    __type(value, struct server_snapshot);
+} server_tags SEC(".maps");
+/* bind-tag, bind-deny, accept-tag, accept-deny, server-send, server-deny. */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 6);
+    __type(key, __u32);
+    __type(value, __u64);
+} server_witness SEC(".maps");
+
+static __always_inline void server_count(__u32 key)
+{
+    __u64 *value = bpf_map_lookup_elem(&server_witness, &key);
+    if (value)
+        __sync_fetch_and_add(value, 1);
+}
+
+static __always_inline int server_live(const struct server_snapshot *s)
+{
+    struct admission *a = bpf_map_lookup_elem(&invocation, &s->cgroup);
+    return s->cgroup && s->generation && a && a->active && a->label &&
+           a->generation == s->generation;
+}
+
+static __always_inline int server_tuple(struct sock *sk,
+                                        const struct server_snapshot *s)
+{
+    if (!sk || sk->sk_type != 1 || sk->sk_protocol != 6 ||
+        sk->__sk_common.skc_num != s->port ||
+        (s->port != 904 && s->port != 905))
+        return 0;
+    if (sk->__sk_common.skc_family == 2)
+        return sk->__sk_common.skc_rcv_saddr == bpf_htonl(0x7f000001);
+    if (sk->__sk_common.skc_family == 10) {
+        struct in6_addr addr = BPF_CORE_READ(sk, __sk_common.skc_v6_rcv_saddr);
+        return !addr.s6_addr32[0] && !addr.s6_addr32[1] && !addr.s6_addr32[2] &&
+               addr.s6_addr32[3] == bpf_htonl(1);
+    }
+    return 0;
+}
+
+/* v6.12.111 bpf_lsm.c sleepable_lsm_hooks includes socket_bind.
+ * This runs BEFORE the kernel privileged-port permission check. A successful
+ * storage creation does NOT prove bind succeeded: accept checks actual tuple. */
+SEC("lsm.s/socket_bind")
+int BPF_PROG(server_bind, struct socket *socket, struct sockaddr *address,
+             int address_len, int ret)
+{
+    if (ret)
+        return ret;
+    __u64 port = 0;
+    int loopback = 0;
+    struct sockaddr_in addr4 = {};
+    struct sockaddr_in6 addr6 = {};
+    if (address_len == sizeof(addr4) &&
+        !bpf_probe_read_kernel(&addr4, sizeof(addr4), address) &&
+        addr4.sin_family == 2) {
+        port = bpf_ntohs(addr4.sin_port);
+        loopback = addr4.sin_addr.s_addr == bpf_htonl(0x7f000001);
+    } else if (address_len == sizeof(addr6) &&
+               !bpf_probe_read_kernel(&addr6, sizeof(addr6), address) &&
+               addr6.sin6_family == 10) {
+        port = bpf_ntohs(addr6.sin6_port);
+        loopback = !addr6.sin6_addr.s6_addr32[0] && !addr6.sin6_addr.s6_addr32[1] &&
+                   !addr6.sin6_addr.s6_addr32[2] &&
+                   addr6.sin6_addr.s6_addr32[3] == bpf_htonl(1);
+    }
+    if (port != 904 && port != 905)
+        return 0; /* No change to the earlier 900/901 EACCES contract. */
+    struct server_snapshot *lease = bpf_map_lookup_elem(&port_leases, &port);
+    struct sock *sk = socket->sk;
+    if ((__u32)bpf_get_current_uid_gid() != 989 || !loopback || !sk ||
+        sk->sk_type != 1 || sk->sk_protocol != 6 || !lease ||
+        lease->role != 2 || lease->port != port || !server_live(lease)) {
+        server_count(1);
+        return -1;
+    }
+    struct server_snapshot *old = bpf_sk_storage_get(&server_tags, sk, 0, 0);
+    if (old) {
+        /* Never overwrite an old generation on a bind retry. */
+        int same = old->role == 2 && old->cgroup == lease->cgroup &&
+                   old->generation == lease->generation && old->port == port;
+        if (!same)
+            server_count(1);
+        return same ? 0 : -1;
+    }
+    struct server_snapshot initial = *lease;
+    if (!bpf_sk_storage_get(&server_tags, sk, &initial, BPF_SK_STORAGE_GET_F_CREATE)) {
+        server_count(1);
+        return -1;
+    }
+    server_count(0);
+    return 0;
+}
+
+struct proto_accept_arg;
+/* PINNED 6.12.111: TWO args + return. BPF_PROG reads accepted from ctx[2].
+ * No old four-argument ABI, FD lookup, socket_accept pre-hook, or port-map
+ * reread. This hook runs on the actual returned sock before FD publication. */
+SEC("fexit/inet_csk_accept")
+int BPF_PROG(server_accept, struct sock *listener, struct proto_accept_arg *arg,
+             struct sock *accepted)
+{
+    if (!listener)
+        return 0;
+    struct server_snapshot *s = bpf_sk_storage_get(&server_tags, listener, 0, 0);
+    if (!s)
+        return 0; /* Earlier suites and ordinary 1080 remain unchanged. */
+    if ((__u32)bpf_get_current_uid_gid() != 989 || s->role != 2 ||
+        listener->__sk_common.skc_state != 10 || !server_live(s) ||
+        !server_tuple(listener, s) || !accepted ||
+        !server_tuple(accepted, s) ||
+        accepted->__sk_common.skc_family != listener->__sk_common.skc_family ||
+        accepted->__sk_common.skc_state != 1 ||
+        bpf_sk_storage_get(&server_tags, accepted, 0, 0)) {
+        server_count(3);
+        return 0;
+    }
+    struct server_snapshot initial = *s;
+    initial.role = 1;
+    if (!bpf_sk_storage_get(&server_tags, accepted, &initial,
+                            BPF_SK_STORAGE_GET_F_CREATE)) {
+        server_count(3);
+        return 0;
+    }
+    server_count(2);
     return 0;
 }
 
@@ -249,6 +397,15 @@ int BPF_PROG(use_socket, struct socket *socket, struct msghdr *msg,
     if (ret)
         return ret;
     struct sock *sk = socket->sk;
+    struct server_snapshot *server = sk ?
+        bpf_sk_storage_get(&server_tags, sk, 0, 0) : 0;
+    if (server) {
+        int allow = (__u32)bpf_get_current_uid_gid() == 989 && server->role == 1 &&
+                    server_live(server) && server_tuple(sk, server) &&
+                    sk->__sk_common.skc_state == 1;
+        server_count(allow ? 4 : 5);
+        return allow ? 0 : -1;
+    }
     struct socket_label *s = sk ?
         bpf_sk_storage_get(&socket_labels, sk, 0, 0) : 0;
     /* Only exact FDs registered by PID 1 receive this flag. Neither root UID,

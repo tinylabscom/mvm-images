@@ -19,6 +19,15 @@ EXEC_UNSUPPORTED = (
     "ATTRIBUTION-PROBE:UNSUPPORTED:exec-byte-attestation,script-chains,"
     "production-exec-decision,concurrent-exec-revocation"
 )
+SERVER_PASS = "ATTRIBUTION-PROBE:PASS:accepted-server-fexit-generation-bidirectional-private-partial"
+SERVER_HOOKS = (
+    "ATTRIBUTION-PROBE:SERVER-HOOKS:bind=12:bind-deny=4:accept=4:"
+    "accept-deny=8:send=6:send-deny=6"
+)
+SERVER_UNSUPPORTED = (
+    "ATTRIBUTION-PROBE:UNSUPPORTED:normal1080-server-SEND,production-server-handler,"
+    "host-FlowMux,concurrent-server-revocation,production-port-reuse"
+)
 BRIDGE_UNSUPPORTED = (
     "ATTRIBUTION-PROBE:UNSUPPORTED:production-slot-reuse,host-FlowMux,"
     "exec-identity,snapshot-restore,production-loader"
@@ -54,7 +63,8 @@ def validate_output(output: str, returncode: int) -> None:
         raise ValueError(f"guest/VMM failed (exit {returncode})")
     markers = (PASS, LIFECYCLE_PASS, BRIDGE_PASS, BRIDGE_CAPACITY,
                BOOTSTRAP_CAPS, BRIDGE_UNSUPPORTED, UNSUPPORTED,
-               EXEC_PASS, EXEC_HOOKS, EXEC_UNSUPPORTED)
+               EXEC_PASS, EXEC_HOOKS, EXEC_UNSUPPORTED,
+               SERVER_PASS, SERVER_HOOKS, SERVER_UNSUPPORTED)
     if any(lines.count(marker) != 1 for marker in markers):
         raise ValueError("missing/duplicate exact partial-success and unsupported markers")
 

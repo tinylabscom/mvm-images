@@ -545,11 +545,16 @@ static void negative_loader_checks(void)
 
 #include "bridge.c"
 #include "exec.c"
+#include "server.c"
 
 int main(int argc, char **argv)
 {
     signal(SIGALRM, deadline);
     signal(SIGPIPE, SIG_IGN);
+    if (argc == 6 && !strcmp(argv[1], "--server-fixture"))
+        return server_fixture(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]));
+    if (argc == 6 && !strcmp(argv[1], "--server-client"))
+        return server_client(atoi(argv[2]), atoi(argv[3]), atoi(argv[5]));
     if (argc == 2 && !strcmp(argv[1], "--exec-tool"))
         return exec_tool();
     if (argc >= 2 && !strcmp(argv[1], "--bridge-egress"))
@@ -666,6 +671,7 @@ int main(int argc, char **argv)
     dprintf(1, "ATTRIBUTION-PROBE:PASS:connect4-connect6-file_receive-partial\n");
     dprintf(1, "ATTRIBUTION-PROBE:PASS:socket-generation-actual-use-revocation-partial\n");
     dprintf(1, "ATTRIBUTION-PROBE:UNSUPPORTED:production-egress-bridge,claim-protocol,verifier-faults,exec-identity,concurrent-teardown,non-TCP\n");
+    server_probe(obj, map);
     (void)v4; (void)v6; (void)receive; (void)label; (void)use;
     /* Links kept live until guest shutdown. */
     sync();
