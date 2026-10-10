@@ -298,8 +298,8 @@ static void exec_probe(struct bpf_object *obj)
             denies += event == 'D';
             exec_exact(counters, totals, paths[trial]);
             if (event == 'A')
-                CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -1 &&
-                      errno == ENOENT); /* Success consumed exact task storage. */
+               /* libbpf returns -errno, unlike the raw syscall's -1. */
+               CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -ENOENT);
             if (trial == 0 && event == 'D' && allows == 0)
                 CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == 0 &&
                       !memcmp(&permit, &readback, sizeof(permit)));
