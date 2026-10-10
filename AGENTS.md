@@ -25,10 +25,12 @@ decision and the measurements behind it are in
 
 The tree has not caught up yet. Today it still takes `mvm` as a pinned flake
 input, compiles mvm's guest binaries from it, builds the `runtime-overlay` and
-`initramfs` roles and both SDK sidecars, bakes `mvm-setpriv` into the builder
-image, and composes both tenant root filesystems with mvm's `mkGuest`, so they
-carry mvm binaries and an mvm-authored `/init`. Removing every one of those
-dependencies is
+`initramfs` roles and both SDK sidecars, and composes both tenant root
+filesystems with mvm's `mkGuest`, so they carry mvm binaries and an
+mvm-authored `/init`. The builder image is composed with `mkGuest` too but
+carries no mvm binary: at builder boot ABI 2, `mvm-host-vm-init`,
+`mvm-builderd` and `mvm-setpriv` all arrive in `mvmctl`'s boot payload.
+Removing every one of those dependencies is
 [tinylabscom/mvm-images#49](https://github.com/tinylabscom/mvm-images/issues/49).
 Until it lands:
 

@@ -58,8 +58,8 @@ build role attr="default" system=system *nix_args:
 kernel attr="workload-vmlinux":
     nix build "./kernel#{{attr}}"
 
-# Build the builder VM. At boot ABI 1 the image bakes no mvm host binaries —
-# the boot contract supplies them from mvmctl's payload at boot — so the eval
+# Build the builder VM. At boot ABI 2 the image bakes no mvm binary — the
+# boot contract supplies all of them from mvmctl's payload at boot — so the eval
 # is pure and no zig toolchain or MVM_HOST_BIN_DIR is involved. Defaults to
 # the pinned mvm commit; pass an mvm checkout to evaluate against it instead.
 builder-vm mvm_checkout="" target=arch:

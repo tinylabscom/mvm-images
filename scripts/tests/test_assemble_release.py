@@ -51,7 +51,7 @@ class BuilderBootAbiTests(unittest.TestCase):
     assembly and the local emitter cannot disagree about how PID 1 arrives."""
 
     def test_the_shipped_value_is_a_supported_abi(self):
-        self.assertIn(ASSEMBLER.builder_boot_abi(ROOT), (0, 1))
+        self.assertIn(ASSEMBLER.builder_boot_abi(ROOT), (0, 1, 2))
 
     def test_a_missing_file_is_refused_by_path(self):
         with tempfile.TemporaryDirectory() as tmp:

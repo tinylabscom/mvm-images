@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class JustfileBuilderVmTests(unittest.TestCase):
     def test_builder_vm_is_a_pure_nix_build(self):
-        """ABI 1: the builder image bakes no mvm host binaries, so its
+        """ABI 2: the builder image bakes no mvm binary, so its
         recipe is a plain nix build — no zig toolchain, no
         build-host-binaries.sh, no MVM_HOST_BIN_DIR, no --impure."""
         justfile = (ROOT / "justfile").read_text()

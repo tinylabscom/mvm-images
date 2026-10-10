@@ -122,7 +122,7 @@ jobs:
           # Bound what we save: the overlay's shim closure pulls far more than
           # the 10 GiB Actions cache holds, so keep the most valuable paths.
           gc-max-store-size: 2G
-      # ABI 1: the image bakes no mvm host binaries — the boot contract
+      # ABI 2: the image bakes no mvm binary — the boot contract
       # supplies them from mvmctl's payload at boot — so the eval is pure
       # and no zig/cargo toolchain or MVM_HOST_BIN_DIR is needed here.
       - name: Build builder VM image

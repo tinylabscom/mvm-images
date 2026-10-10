@@ -1,11 +1,12 @@
 {
-  description = "mvm builder VM image — kernel + rootfs.ext4 with Nix + tools + mvm-host-vm-init (Plan 72 W2)";
+  description = "mvm builder VM image — kernel + rootfs.ext4 with Nix + build tools; mvm binaries arrive in the boot payload";
 
   # ── Why this flake exists ────────────────────────────────────────────
   #
   # This flake is the artifact the builder VM boots into: a small Linux
-  # kernel + ext4 rootfs containing Nix + a curated build-tools subset +
-  # `mvm-host-vm-init` at `/sbin/mvm-host-vm-init`.
+  # kernel + ext4 rootfs containing Nix + a curated build-tools subset.
+  # It carries no mvm binary: `mvm-host-vm-init`, `mvm-builderd` and
+  # `mvm-setpriv` arrive at boot in mvmctl's builder boot payload.
   #
   # The root flake exposes these packages as `legacyPackages.<system>.builder-vm`;
   # its `default` produces `$out/{vmlinux,rootfs.ext4,cmdline.txt,manifest.json}`.
@@ -35,9 +36,9 @@
   #   `losetup`).
   # - iproute2 (used by `udhcpc` and friends; small).
   # - **No** `procps`-interactive / `less` — kept slim.
-  # - `mvm-host-vm-init` mounted at `/sbin/mvm-host-vm-init` via
-  #   `extraFiles`. The kernel cmdline (`cmdline.txt` output)
-  #   chains into it from the generic `/init` bootstrap.
+  # - No mvm binary. At builder boot ABI 2 the boot payload supplies
+  #   `mvm-host-vm-init`, `mvm-builderd` and `mvm-setpriv`, and the
+  #   guest runs them from `/run/mvm/host-bins`.
 
   # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
   # microvm.nix and the exact `mvm` commit once for every image and calls
@@ -63,11 +64,12 @@
         };
 
       # The builder boot ABI this image is built to (./boot-abi.nix, a bare
-      # integer, so the manifest emitters read the same value as text). ABI 1:
-      # mvm's host binaries (mvm-host-vm-init, mvm-builderd) arrive at boot in
-      # mvmctl's own initramfs payload, so the image bakes none of them and
-      # the derivation evaluates pure — no rustPlatform.buildRustPackage
-      # calls are permitted in this flake.
+      # integer, so the manifest emitters read the same value as text). ABI 2:
+      # every mvm binary the builder runs (mvm-host-vm-init, mvm-builderd,
+      # mvm-setpriv) arrives at boot in mvmctl's own initramfs payload, so the
+      # image bakes none of them and the derivation evaluates pure — no
+      # rustPlatform.buildRustPackage calls are permitted in this flake, and
+      # the image's closure contains no mvm package.
       bootAbi = import ./boot-abi.nix;
       cacheContractVersion = import ./cache-contract.nix;
 
@@ -120,11 +122,6 @@
           };
         });
 
-      # Use the same static privilege-drop helper as workload init. Including
-      # it in the package list gives the builder rootfs a stable
-      # `/sbin/mvm-setpriv` symlink through mkGuest's package population loop.
-      builderSetprivFor = system: mvm.packages.${system}.mvm-setpriv;
-
       # Narrower than the interactive image. See module-level docs
       # above for the rationale on each.
       #
@@ -167,7 +164,6 @@
         iproute2
         e2fsprogs
         util-linux
-        (builderSetprivFor system)
         # The host VM spawns one Firecracker workload microVM per
         # `WorkloadStart` dispatch inside itself. Sourced from the pinned
         # nixpkgs above — an upstream Nix package, never an
@@ -206,7 +202,7 @@
       # - `rootwait` — wait for virtio-blk root enumeration before mounting.
       # - `panic=-1 loglevel=8` — reboot on panic and keep early boot verbose
       #   enough that the host-side console capture has useful crash context.
-      # - `init=/init` alone — at boot ABI 1 the image bakes no mvm binary,
+      # - `init=/init` alone — at boot ABI 2 the image bakes no mvm binary,
       #   so there is nothing to chain into: booting the image by itself
       #   enters the shell-known-good busybox /init. Every real builder boot
       #   composes its own line from the boot contract (a payload boot names
@@ -238,8 +234,8 @@
       # kernel arg goes unused — same rootfs whether we're producing
       # the full builder-VM image or the Stage 0 seed.
       #
-      # Host binaries (mvm-host-vm-init, mvm-builderd) are no
-      # longer baked into the rootfs at all: at ABI 1 the boot
+      # mvm binaries (mvm-host-vm-init, mvm-builderd, mvm-setpriv)
+      # are not baked into the rootfs at all: at ABI 2 the boot
       # contract supplies them from mvmctl's initramfs payload at
       # boot, and the image writes only the ABI marker below.
       mkBuilderVmRootfs =
@@ -265,11 +261,16 @@
           # Persistent build jobs run as this unprivileged numeric uid. Keep
           # a passwd/group entry so Nix can resolve its home directory.
           builderUid = 902;
+          # ABI 2: mvm-setpriv comes from the boot payload, not the rootfs.
+          # mkGuest then leaves the helper out of the image and its closure,
+          # and its generated scripts name the payload's copy under
+          # /run/mvm/host-bins.
+          withSetpriv = false;
           packages = (builderPackages system pkgs) ++ extraPkgs;
           # /etc/mvm/builder-boot-abi tells the boot contract this
-          # image meets ABI 1: PID 1 (mvm-host-vm-init) and mvm-builderd
-          # arrive in mvmctl's initramfs payload, baked nowhere in this
-          # rootfs.
+          # image meets ABI 2: PID 1 (mvm-host-vm-init), mvm-builderd and
+          # mvm-setpriv arrive in mvmctl's initramfs payload, baked nowhere
+          # in this rootfs.
           # /usr/bin/firecracker is pinned for the guest's
           # FirecrackerVmm spawn. firecracker is
           # also in `packages` above (for the full closure +

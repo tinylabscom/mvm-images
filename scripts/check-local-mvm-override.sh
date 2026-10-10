@@ -58,7 +58,7 @@ printf '// local edit\n' >> "$work/edited/crates/mvm-agentd/src/lib.rs"
 unchanged=$(cd "$work/unchanged" && pwd -P)
 edited=$(cd "$work/edited" && pwd -P)
 
-# At boot ABI 1 the builder image bakes no mvm host binaries — the boot
+# At boot ABI 2 the builder image bakes no mvm binary — the boot
 # contract supplies them from mvmctl's payload — so every role drvPath above
 # evaluates pure; no environment and no --impure. The one exception is the
 # MVM_WORKSPACE_PATH guard check below: the flake refuses that variable

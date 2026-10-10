@@ -5,8 +5,8 @@
 # Usage: scripts/check-reproducible.sh \
 #   <aarch64|x86_64> <builder-vm|default-tenant|rootless-tenant|runtime-overlay> <out-dir>
 #
-# The builder role evaluates pure: at boot ABI 1 it bakes no mvm host
-# binaries — the boot contract supplies them from mvmctl's payload — so it
+# The builder role evaluates pure: at boot ABI 2 it bakes no mvm binary —
+# the boot contract supplies them from mvmctl's payload — so it
 # reads no environment. The tenant roles read MVM_BOOT_IMAGE_TAG and stay
 # impure. This script never invokes mvm or compares against mvm's retired
 # in-tree image recipes: mvm-images is the canonical image producer.
@@ -20,7 +20,7 @@ out="${3:?out dir}"
 system="${arch}-linux"
 
 case "$role" in
-  # ABI 1: the builder image reads no environment, so its eval is pure.
+  # ABI 2: the builder image reads no environment, so its eval is pure.
   builder-vm)
     attrs=(default)
     impure=()
