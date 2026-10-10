@@ -298,8 +298,8 @@ static void exec_probe(struct bpf_object *obj)
             denies += event == 'D';
             exec_exact(counters, totals, paths[trial]);
             if (event == 'A')
-               /* libbpf returns -errno, unlike the raw syscall's -1. */
-               CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -ENOENT);
+                /* libbpf returns -errno, unlike the raw syscall's -1. */
+                CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -ENOENT);
             if (trial == 0 && event == 'D' && allows == 0)
                 CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == 0 &&
                       !memcmp(&permit, &readback, sizeof(permit)));
@@ -314,7 +314,7 @@ static void exec_probe(struct bpf_object *obj)
                   !memcmp(&permit, &readback, sizeof(permit)));
             CHECK(bpf_map_delete_elem(permits, &pidfd) == 0);
         }
-        CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -1 && errno == ENOENT);
+        CHECK(bpf_map_lookup_elem(permits, &pidfd, &readback) == -ENOENT);
         scope.active = 0;
         scope.generation++;
         CHECK(bpf_map_update_elem(scope_map, &cg, &scope, BPF_EXIST) == 0);

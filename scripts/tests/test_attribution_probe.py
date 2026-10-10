@@ -12,6 +12,12 @@ SPEC.loader.exec_module(boot)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_permit_absence_uses_libbpf_return_convention(self):
+        source = (ROOT / "kernel/attribution-probe/exec.c").read_text()
+        expression = "bpf_map_lookup_elem(permits, &pidfd, &readback)"
+        self.assertEqual(source.count(expression + " == -ENOENT"), 2)
+        self.assertNotIn(expression + " == -1", source)
+
     def test_explicit_devices_and_bounded_success_contract(self):
         for arch in ("x86_64", "aarch64"):
             cmd = boot.command(arch, Path("/kernel"), Path("/rootfs"), "tcg")
