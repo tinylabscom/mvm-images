@@ -236,14 +236,16 @@ SEC("fexit/inet_csk_accept")
 int BPF_PROG(server_accept, struct sock *listener, struct proto_accept_arg *arg,
              struct sock *accepted)
 {
-    if (!listener)
+    /* An empty nonblocking accept returns no socket. It is not a rejected
+     * socket label and must not count as an authorization denial. */
+    if (!listener || !accepted)
         return 0;
     struct server_snapshot *s = bpf_sk_storage_get(&server_tags, listener, 0, 0);
     if (!s)
         return 0; /* Earlier suites and ordinary 1080 remain unchanged. */
     if ((__u32)bpf_get_current_uid_gid() != 989 || s->role != 2 ||
         listener->__sk_common.skc_state != 10 || !server_live(s) ||
-        !server_tuple(listener, s) || !accepted ||
+        !server_tuple(listener, s) ||
         !server_tuple(accepted, s) ||
         accepted->__sk_common.skc_family != listener->__sk_common.skc_family ||
         accepted->__sk_common.skc_state != 1 ||

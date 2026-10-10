@@ -317,6 +317,12 @@ class ProbeTests(unittest.TestCase):
             "!server_live(s)", "BPF_SK_STORAGE_GET_F_CREATE",
         ):
             self.assertIn(contract, accept)
+        empty = accept.index("if (!listener || !accepted)")
+        storage = accept.index("bpf_sk_storage_get(&server_tags, listener")
+        denial = accept.index("server_count(3)")
+        self.assertLess(empty, storage)
+        self.assertLess(storage, denial)
+        self.assertIn("return 0;", accept[empty:storage])
         self.assertNotIn("bpf_probe_read_kernel", accept)
         self.assertNotIn("socket_accept", accept.split("int BPF_PROG", 1)[1])
         bind = bpf.split('SEC("lsm.s/socket_bind")', 1)[1].split(
