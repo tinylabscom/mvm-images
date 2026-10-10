@@ -253,7 +253,9 @@ static struct server_child server_launch(int family, int port, int mode, int uid
         if (!client && (mode == 0 || mode == 6 || mode == 7))
             egress_privileges();
         else
-            server_zero_identity(uid);
+            /* Negative client UID selects expected connect denial, not a
+             * different credential. Preserve the signed exec argument below. */
+            server_zero_identity(client && uid < 0 ? -uid : uid);
         char af[16], p[16], m[16], u[16];
         snprintf(af, sizeof(af), "%d", family);
         snprintf(p, sizeof(p), "%d", port);

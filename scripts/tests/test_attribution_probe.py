@@ -373,6 +373,28 @@ class ProbeTests(unittest.TestCase):
         ):
             self.assertIn(contract, server)
 
+    def test_server_denial_argument_is_not_a_linux_credential(self):
+        server = (ROOT / "kernel/attribution-probe/server.c").read_text()
+        launch = server.split("static struct server_child server_launch(", 1)[1].split(
+            "static void server_command(", 1)[0]
+        # Both denial cases still execute as UID 902/GID 907. Only the
+        # credential call normalizes the sign; exec keeps the denial selector.
+        drop = launch.index("server_zero_identity(client && uid < 0 ? -uid : uid)")
+        argument = launch.index('snprintf(u, sizeof(u), "%d", uid)')
+        execute = launch.index('execl("/tool", "/tool"')
+        self.assertLess(drop, argument)
+        self.assertLess(argument, execute)
+        self.assertNotIn("uid = -uid", launch)
+        client = server.split("static int server_client(", 1)[1].split(
+            "static struct server_child server_launch(", 1)[0]
+        self.assertLess(client.index("bool denied = uid < 0"),
+                        client.index("if (denied) uid = -uid"))
+        self.assertLess(client.index("if (denied) uid = -uid"),
+                        client.index("server_identity_check(uid, false)"))
+        self.assertIn("CHECK(setresuid(uid, uid, uid) == 0)", server)
+        self.assertIn("CHECK(getuid() == (uid_t)uid && geteuid() == (uid_t)uid)", server)
+        self.assertIn("uid == 902 ? 907 : uid", server)
+
     def test_server_real_echo_revocation_failed_bind_and_normal_gap_are_mandatory(self):
         server = (ROOT / "kernel/attribution-probe/server.c").read_text()
         init = (ROOT / "kernel/attribution-probe/init.c").read_text()
@@ -394,7 +416,8 @@ class ProbeTests(unittest.TestCase):
             "bind(listener, (void *)&ss, len) == -1 && errno == EPERM",
             "listen(listener, 8)", "CHECK(server.port != (int)port)",
             "recv(accepted, &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN",
-            "SYS_close_range, 5, ~0U, 0", "server_zero_identity(uid)",
+            "SYS_close_range, 5, ~0U, 0",
+            "server_zero_identity(client && uid < 0 ? -uid : uid)",
             "egress_privileges()", "exact_cap_mask(bind_cap",
             "if (value != server_expected[key])",
             "{ 12, 4, 4, 8, 6, 6, 6, 4 }",

@@ -14,6 +14,14 @@ production** on the strength of a partial-pass marker. No `mvm` checkout,
 binary, runtime, overlay, manifest or image lock participates. No production
 recipe, kernel configuration, output, NIC or vsock changes.
 
+The accepted-server extension at `c0ca1a258fbf8e1b4a200022986c17c3e9bca921`
+failed on both architectures in [run 38016195926](https://github.com/tinylabscom/mvm-images/actions/runs/38016195926).
+The denial-client fixture passed its signed `-902` expected-denial argument to
+Linux credential setup, then checked actual UID 902 after exec. Credential
+setup now uses positive UID 902/GID 907 while exec retains the denial selector.
+This fixture correction is not guest enforcement evidence: the accepted-server
+gates still require a successful bounded boot on both architectures.
+
 ## Deliberately restrictive policy
 
 The trusted PID 1 creates root-owned, mode 0700, nondelegated invocation
