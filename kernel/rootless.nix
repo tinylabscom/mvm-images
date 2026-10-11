@@ -56,8 +56,8 @@ base.mkKernel {
     "USER_NS"
     "PID_NS"
 
-    # Unified cgroup v2 controllers delegated by mkGuest's fixed boot shim to
-    # uid 1000 at /sys/fs/cgroup/mvm-workload.
+    # Unified cgroup v2 controllers delegated to the workload identity (uid
+    # 901, mvm-worker) at /sys/fs/cgroup/mvm-workload.
     "CGROUPS"
     "MEMCG"
     "BLK_CGROUP"
