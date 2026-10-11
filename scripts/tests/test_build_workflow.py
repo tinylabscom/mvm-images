@@ -39,7 +39,8 @@ class BuildWorkflowTests(unittest.TestCase):
             self.assertNotIn(forbidden, self.build)
         self.assertIn("scripts/check_linux_layer.py", self.build)
         self.assertIn("scripts/build-kernel-artifacts.sh", self.build)
-        self.assertIn("--builder --kernel-config", self.build)
+        self.assertIn("--profile builder --kernel-config", self.build)
+        self.assertIn('--profile "${profile}-tenant"', self.build)
         self.assertIn("--init /usr/local/bin/mvm-rootless-probe", self.build)
         self.assertNotIn("mvmctl", self.build)
 

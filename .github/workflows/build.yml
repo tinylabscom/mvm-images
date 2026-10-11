@@ -56,7 +56,7 @@ jobs:
           cp -L "$builder/kernel.config" "staging/builder-vm-${ARCH}.kernel.config"
           cp -L "$builder/rootfs.ext4" "staging/builder-vm-rootfs-${ARCH}.ext4"
           python3 scripts/check_linux_layer.py --arch "$ARCH" --kernel "$builder/vmlinux" \
-            --format "$format" --rootfs "$builder/rootfs.ext4" --builder --kernel-config "$builder/kernel.config"
+            --format "$format" --rootfs "$builder/rootfs.ext4" --profile builder --kernel-config "$builder/kernel.config"
           for profile in default rootless; do
             image=$(nix build ".#legacyPackages.${SYSTEM}.${profile}-tenant.default" --no-link --print-out-paths)
             cp -L "$image/vmlinux" "staging/${profile}-microvm-vmlinux-${ARCH}"
@@ -64,7 +64,7 @@ jobs:
               cp -L "$image/rootfs.$suffix" "staging/${profile}-microvm-rootfs-${ARCH}.$suffix"
             done
             python3 scripts/check_linux_layer.py --arch "$ARCH" --kernel "$image/vmlinux" \
-              --format "$format" --rootfs "$image/rootfs.ext4"
+              --format "$format" --rootfs "$image/rootfs.ext4" --profile "${profile}-tenant"
           done
           dev=$(nix build ".#legacyPackages.${SYSTEM}.default-tenant.dev" --no-link --print-out-paths)
           cp -L "$dev/vmlinux" "staging/default-microvm-dev-vmlinux-${ARCH}"

@@ -92,11 +92,15 @@ output containing the named files:
 
 ```sh
 python3 scripts/check_linux_layer.py --arch x86_64 \
-  --kernel result/vmlinux --format elf --rootfs result/rootfs.ext4 --builder
+  --kernel result/vmlinux --format elf --rootfs result/rootfs.ext4 --profile builder
 ```
 
 Artifact checks require actual built files; fast `release-check` retains
 Python coverage without pretending unbuilt artifacts have been verified.
+The `--profile` selects the Linux-layer contract. The symbol ceilings in
+`kernel/budgets.json` apply only to `default-tenant`, never the larger
+builder or rootless kernels. NIC-less and rootless capability checks remain
+separate mandatory build checks.
 
 ```sh
 just e2e-plan result

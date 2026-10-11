@@ -72,6 +72,26 @@ class LinuxLayerTests(unittest.TestCase):
                 layer.check_budget(path, "x86_64")
             layer.check_budget(path, "aarch64")
 
+    def test_default_budget_does_not_apply_to_other_kernel_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config"
+            path.write_text("".join(f"CONFIG_S{i}=y\n" for i in range(1100)))
+            for arch in ("x86_64", "aarch64"):
+                for profile in ("builder", "rootless-tenant", "default-tenant"):
+                    with self.subTest(arch=arch, profile=profile), patch(
+                        "sys.argv",
+                        ["check_linux_layer.py", "--arch", arch,
+                         "--kernel-config", str(path), "--profile", profile],
+                    ), patch("builtins.print"):
+                        self.assertEqual(layer.main(), 1 if profile == "default-tenant" else 0)
+
+    def test_builder_profile_still_checks_the_builder_root_contract(self):
+        with patch("sys.argv", ["check_linux_layer.py", "--arch", "x86_64",
+                                "--rootfs", "fixture", "--profile", "builder"]), \
+             patch.object(layer, "check_rootfs") as check:
+            self.assertEqual(layer.main(), 0)
+            check.assert_called_once_with(Path("fixture"), True)
+
     def rootfs_fixture(self):
         accounts = {"root": 0, "mvm-worker": 901, "mvm-dns": 987,
                     "mvm-crng": 988, "mvm-egress": 989, "mvm-builder": 902}

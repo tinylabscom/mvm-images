@@ -94,7 +94,11 @@ def main() -> int:
     parser.add_argument("--format", choices=("elf", "image", "bzimage"))
     parser.add_argument("--kernel-config", type=Path)
     parser.add_argument("--rootfs", type=Path)
-    parser.add_argument("--builder", action="store_true")
+    parser.add_argument(
+        "--profile", choices=("default-tenant", "rootless-tenant", "builder"),
+        default="default-tenant",
+        help="Linux profile; symbol ceilings apply only to the default workload kernel",
+    )
     args = parser.parse_args()
     if not any((args.kernel, args.kernel_config, args.rootfs)):
         parser.error("provide --kernel, --kernel-config or --rootfs")
@@ -104,9 +108,14 @@ def main() -> int:
         if args.kernel:
             check_kernel(args.kernel, args.arch, args.format)
         if args.kernel_config:
-            check_budget(args.kernel_config, args.arch)
+            if not args.kernel_config.is_file():
+                raise ValueError(f"{args.kernel_config}: kernel configuration is not a file")
+            if args.profile == "default-tenant":
+                check_budget(args.kernel_config, args.arch)
+            else:
+                print(f"{args.profile}: default workload symbol budget does not apply")
         if args.rootfs:
-            check_rootfs(args.rootfs, args.builder)
+            check_rootfs(args.rootfs, args.profile == "builder")
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"Linux-layer check failed: {error}")
         return 1
