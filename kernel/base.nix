@@ -158,6 +158,14 @@ let
     "PARAVIRT"
     "KVM_GUEST"
 
+    # PVH entry point. `qemu-system-x86_64 -kernel` loads an uncompressed ELF
+    # only through the PVH note (XEN_ELFNOTE_PHYS32_ENTRY) and refuses one
+    # without it, and the QEMU builder boots the builder vmlinux the same way.
+    # PVH sits under HYPERVISOR_GUEST and needs no XEN, which stays off. With
+    # the note present Firecracker's x86_64 loader also enters through it
+    # rather than the 64-bit Linux boot protocol.
+    "PVH"
+
     # libkrun on x86 has no device tree (as on aarch64) and no PCI enumeration
     # (as under QEMU): it advertises its virtio-mmio devices *only* through
     # `virtio_mmio.device=<size>@<addr>:<irq>` kernel-cmdline params. Without
@@ -845,6 +853,15 @@ let
           if [ "$magic" != "7f454c46" ]; then
             echo "ERROR: extract-vmlinux did not yield an ELF (magic=0x$magic)." >&2
             echo "Firecracker's x86_64 loader takes an uncompressed ELF vmlinux only." >&2
+            exit 1
+          fi
+          # QEMU's -kernel loads this ELF only through the PVH entry note
+          # (owner Xen, type 0x12, XEN_ELFNOTE_PHYS32_ENTRY). CONFIG_PVH emits
+          # it; assert it survived into the extracted ELF.
+          if ! ''${READELF:-readelf} -n "$out/vmlinux" \
+            | grep -Eq '^[[:space:]]*Xen[[:space:]]+0x[0-9a-f]+[[:space:]]+(Unknown note type: \(0x00000012\)|XEN_ELFNOTE_PHYS32_ENTRY)'; then
+            echo "ERROR: $out/vmlinux carries no PVH entry note (Xen 0x12)." >&2
+            echo "qemu-system-x86_64 -kernel refuses an uncompressed kernel without it." >&2
             exit 1
           fi
         '';
