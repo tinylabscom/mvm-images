@@ -1,8 +1,8 @@
-"""Tests for building against a local mvm checkout.
+"""Tests for describing locally built Linux images without an mvm checkout.
 
 Run with: python3 -m unittest discover -s scripts/tests -v
 
-Covers `emit-local-manifest.py` against throwaway `mvm` and `mvm-images`
+Covers `emit-local-manifest.py` against throwaway `mvm-images`
 checkouts. Every checkout here is a throwaway git repository under a
 temporary directory; nothing touches this repository's own tree.
 """
@@ -72,32 +72,11 @@ def dirty_fixture(root: Path) -> Path:
     return root
 
 
-AGENT_SOURCE = """\
-/// The protocol this agent speaks.
-pub const PROTOCOL_VERSION: u32 = 3;
-
-/// The oldest one it still accepts.
-pub const MIN_SUPPORTED_PROTOCOL_VERSION: u32 = 2;
-"""
-
-
-def mvm_checkout(root: Path) -> Path:
-    return committed_repo(
-        root,
-        {
-            "Cargo.toml": "[workspace]\n",
-            "Cargo.lock": "version = 4\n",
-            "nix/flake.nix": "{ }\n",
-            "crates/mvm-build/Cargo.toml": "[package]\n",
-            eml.AGENT_PROTOCOL_SOURCE: AGENT_SOURCE,
-        },
-    )
-
-
 def images_checkout(root: Path, boot_abi: str = "1\n") -> Path:
     files = {marker: f"# {marker}\n" for marker in eml.IMAGES_MARKERS}
     files["kernel/flake.lock"] = '{"nodes": {}}\n'
     files["images/builder-vm/boot-abi.nix"] = boot_abi
+    files["images/base-image-contract.nix"] = "1\n"
     return committed_repo(root, files)
 
 
@@ -105,7 +84,7 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(os.path.realpath(self._tmp.name))
-        self.mvm = mvm_checkout(self.tmp / "mvm")
+        self.mvm = committed_repo(self.tmp / "other", {"unrelated.txt": "not an image checkout\n"})
         self.images = images_checkout(self.tmp / "mvm-images")
         self.built = self.tmp / "built"
         self.built.mkdir()
@@ -121,7 +100,6 @@ class Fixture(unittest.TestCase):
 
     def args(self, *artifacts, out=None, capabilities=(), arch="aarch64", contract=1):
         argv = [
-            "--mvm-checkout", str(self.mvm),
             "--images-checkout", str(self.images),
             "--arch", arch,
             "--builder-cache-contract", str(contract),
@@ -194,31 +172,31 @@ class Emit(Fixture):
         detail = self.refused(("builder_vm", "ext4", self.artifact("rootfs.ext4")))
         self.assertIn("boot-abi.nix", detail)
 
-    def test_records_both_checkouts_and_every_artifact(self):
+    def test_records_only_images_checkout_and_every_artifact(self):
         kernel = self.artifact("vmlinux", b"kernel bytes")
         overlay = self.artifact("overlay.ext4", b"overlay")
         pack = self.artifact("qemu-wasm-smoke-pack.tar.gz", b"pack")
         manifest = self.emit(
             ("default_tenant_workload_kernel", "kernel:image", kernel),
-            ("runtime_overlay", "ext4", overlay),
+            ("default_tenant_workload_rootfs", "ext4", overlay),
             ("qemu_wasm_smoke_pack", "tar_gz", pack),
             capabilities=[
                 ("default_tenant_workload_kernel", "virtio_vsock"),
                 ("default_tenant_workload_kernel", "virtio_blk"),
             ],
         )
-        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["schema_version"], 3)
         self.assertEqual(manifest["set_version"], "0.0.0-local")
         local = manifest["producer"]["local_checkouts"]
         self.assertEqual(set(manifest["producer"]), {"local_checkouts"})
-        self.assertEqual(local["mvm"], eml.repo_identity(self.mvm))
+        self.assertEqual(set(local), {"images"})
         self.assertEqual(local["images"], eml.repo_identity(self.images))
-        self.assertEqual(local["mvm"]["worktree"], {"state": "clean"})
-        self.assertEqual(manifest["mvm_source_commit"], local["mvm"]["commit"])
+        self.assertEqual(local["images"]["worktree"], {"state": "clean"})
+        self.assertNotIn("mvm_source_commit", manifest)
         self.assertEqual(
             manifest["compatibility"],
             {
-                "guest_agent_protocol": {"min": 2, "max": 3},
+                "base_image_contract": 1,
                 "builder_cache_contract": 1,
                 "builder_boot_abi": 1,
             },
@@ -249,7 +227,7 @@ class Emit(Fixture):
             }],
         )
         self.assertNotIn("boot_protocol", overlay_member)
-        self.assertEqual(overlay_member["artifacts"][0]["name"], "runtime-overlay-aarch64-overlay.ext4")
+        self.assertEqual(overlay_member["artifacts"][0]["name"], "default-tenant-workload-rootfs-aarch64-overlay.ext4")
         self.assertEqual(pack_member["target"], "arch_independent")
         self.assertEqual(
             pack_member["artifacts"][0]["name"], "qemu-wasm-smoke-pack-qemu-wasm-smoke-pack.tar.gz"
@@ -267,15 +245,11 @@ class Emit(Fixture):
             self.assertNotIn("pack_hash", member)
             self.assertNotIn("sbom", member)
 
-    def test_sdk_sidecars_name_their_c_library(self):
-        manifest = self.emit(
-            ("sdk_sidecar_glibc", "ext4", self.artifact("glibc/sdk.ext4")),
-            ("sdk_sidecar_musl", "ext4", self.artifact("musl/sdk.ext4")),
-        )
-        self.assertEqual(
-            [m["role"] for m in manifest["members"]],
-            [{"sdk_sidecar": "glibc"}, {"sdk_sidecar": "musl"}],
-        )
+    def test_retired_guest_runtime_roles_are_refused(self):
+        for role in ("sdk_sidecar_glibc", "sdk_sidecar_musl", "runtime_overlay", "initramfs"):
+            with self.subTest(role=role):
+                self.assertIn("unknown role", self.refused(
+                    (role, "ext4", self.artifact(f"{role}.ext4"))))
 
     def test_default_and_rootless_workload_pairs_have_distinct_profiled_roles(self):
         artifacts = []
@@ -320,13 +294,13 @@ class Emit(Fixture):
         self.assertEqual(sorted(p.name for p in out.iterdir()), sorted([copy.name, "image-set.json"]))
 
     def test_records_a_dirty_checkout_by_the_fingerprint(self):
-        (self.mvm / "Cargo.lock").write_text("version = 4\n# edited\n")
+        (self.images / "flake.lock").write_text("# edited\n")
         manifest = self.emit(
             ("default_tenant_workload_kernel", "kernel:elf", self.artifact("vmlinux"))
         )
-        mvm = manifest["producer"]["local_checkouts"]["mvm"]
-        self.assertEqual(mvm["worktree"], eml.worktree_state(self.mvm))
-        self.assertEqual(mvm["worktree"]["state"], "dirty")
+        images = manifest["producer"]["local_checkouts"]["images"]
+        self.assertEqual(images["worktree"], eml.worktree_state(self.images))
+        self.assertEqual(images["worktree"]["state"], "dirty")
 
     def test_honours_source_date_epoch(self):
         with mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1767225600"}):
@@ -345,7 +319,7 @@ class Refusals(Fixture):
         )
 
     def test_an_output_inside_either_checkout(self):
-        for root in (self.mvm, self.images):
+        for root in (self.images,):
             self.assertIn("inside the checkout", self.refused(self.kernel(), out=root / "set"))
 
     def test_an_output_that_already_holds_something(self):
@@ -356,11 +330,11 @@ class Refusals(Fixture):
 
     def test_leaves_nothing_behind_when_refused(self):
         self.refused(self.kernel(), ("no_such_role", "ext4", self.artifact("x")))
-        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["built", "mvm", "mvm-images"])
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ["built", "mvm-images", "other"])
 
     def test_a_subdirectory_of_a_checkout(self):
         argv = self.args(self.kernel())
-        argv.mvm_checkout = str(self.mvm / "nix")
+        argv.images_checkout = str(self.images / "images")
         with self.assertRaises(eml.Refusal) as caught:
             eml.emit(argv)
         self.assertIn("not the root of its git checkout", str(caught.exception))
@@ -369,16 +343,16 @@ class Refusals(Fixture):
         plain = self.tmp / "plain"
         plain.mkdir()
         argv = self.args(self.kernel())
-        argv.mvm_checkout = str(plain)
+        argv.images_checkout = str(plain)
         with self.assertRaises(eml.Refusal):
             eml.emit(argv)
 
-    def test_a_checkout_that_is_not_mvm(self):
+    def test_a_checkout_that_is_not_mvm_images(self):
         argv = self.args(self.kernel())
-        argv.mvm_checkout = str(self.images)
+        argv.images_checkout = str(self.mvm)
         with self.assertRaises(eml.Refusal) as caught:
             eml.emit(argv)
-        self.assertIn("not an mvm checkout", str(caught.exception))
+        self.assertIn("not an mvm-images checkout", str(caught.exception))
 
     def test_a_symlinked_marker(self):
         target = self.tmp / "elsewhere.nix"
@@ -389,12 +363,12 @@ class Refusals(Fixture):
 
     def test_a_checkout_named_through_a_link_resolves_to_its_root(self):
         link = self.tmp / "mvm-link"
-        os.symlink(self.mvm, link)
+        os.symlink(self.images, link)
         argv = self.args(self.kernel())
-        argv.mvm_checkout = str(link)
+        argv.images_checkout = str(link)
         manifest = json.loads(eml.emit(argv).read_text())
         self.assertEqual(
-            manifest["producer"]["local_checkouts"]["mvm"], eml.repo_identity(self.mvm)
+            manifest["producer"]["local_checkouts"]["images"], eml.repo_identity(self.images)
         )
 
     def test_unknown_roles_formats_and_capabilities(self):
@@ -456,10 +430,9 @@ class Refusals(Fixture):
         self.assertIn("no --artifact", self.refused())
         self.assertIn("positive integer", self.refused(self.kernel(), contract=0))
 
-    def test_an_agent_source_without_one_protocol_range(self):
-        (self.mvm / eml.AGENT_PROTOCOL_SOURCE).write_text("pub const PROTOCOL_VERSION: u32 = 3;\n")
-        run_git(self.mvm, "commit", "-qam", "drop the minimum")
-        self.assertIn("MIN_SUPPORTED_PROTOCOL_VERSION", self.refused(self.kernel()))
+    def test_an_unsupported_base_contract_is_refused(self):
+        (self.images / "images/base-image-contract.nix").write_text("2\n")
+        self.assertIn("unsupported base-image contract", self.refused(self.kernel()))
 
     def test_a_checkout_that_changes_while_recording(self):
         real = eml.repo_identity
@@ -468,7 +441,7 @@ class Refusals(Fixture):
         def drifting(root):
             calls["n"] += 1
             identity = real(root)
-            if calls["n"] > 2 and root == self.mvm:
+            if calls["n"] > 1 and root == self.images:
                 identity = {**identity, "worktree": {"state": "dirty", "fingerprint": "0" * 64}}
             return identity
 

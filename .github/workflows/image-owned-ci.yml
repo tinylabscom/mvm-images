@@ -25,8 +25,8 @@ jobs:
       - name: Build image derivations (fast subset)
         run: |
           set -euo pipefail
-          # Build the runtime overlay and default-tenant derivations (x86_64)
-          just build runtime-overlay default
+          # Build the locally composed Linux base (no guest-runtime roles).
+          just build default-tenant default
           # Also build the qemu-wasm smoke pack (produces both kernel formats + rootfs) on x86_64
           arch=$(uname -m)
           if [ "$arch" = "x86_64" ] || [ "$arch" = "amd64" ]; then
@@ -34,7 +34,7 @@ jobs:
             # Locate the nix store result(s) and copy expected artifacts into ./result
             system=$(uname -m | sed -e 's/^arm64$/aarch64/' -e 's/^amd64$/x86_64/')-linux
             echo "system=$system"
-            STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths | head -n1)"
+            STORE="$(nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack" --no-link --print-out-paths)"
             echo "STORE=$STORE"
             # Ensure ./result is a writable directory (nix build may create a symlink or root-owned files)
             if [ -L result ] || [ -e result ]; then sudo rm -rf result; fi

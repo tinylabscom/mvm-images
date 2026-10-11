@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The kernel config budget still lives in mvm's xtask gate (renamed
-# check_kernel_config_budget.rs -> kernel_config_budget.rs when mvm's W8
-# retired the standalone gate). Read it from the pinned mvm commit rather
-# than keeping a second copy of the numbers here.
-# shellcheck source=scripts/mvm-source.sh
-. "$(dirname "${BASH_SOURCE[0]}")/mvm-source.sh"
+# Kernel symbol budgets belong to this Linux layer in kernel/budgets.json.
 
 arch="${1:?usage: build-kernel-artifacts.sh <aarch64|x86_64>}"
 case "$arch" in
@@ -15,6 +10,8 @@ case "$arch" in
 esac
 
 system="${arch}-linux"
+kernel_file=vmlinux
+[[ "$arch" != aarch64 ]] || kernel_file=Image
 mkdir -p staging
 for variant in builder workload rootless; do
   if [[ "$variant" == rootless ]]; then
@@ -22,17 +19,13 @@ for variant in builder workload rootless; do
   else
     ref=".#legacyPackages.${system}.builder-vm.${variant}-kernel"
   fi
-  store=$(nix build "$ref" --impure --no-link --print-out-paths | head -1)
-  if [[ -f "$store/Image" ]]; then
-    src="$store/Image"
-  elif [[ -f "$store/bzImage" ]]; then
-    src="$store/bzImage"
-  else
-    echo "no kernel image (Image/bzImage) in $store" >&2
+  store=$(nix build "$ref" --impure --no-link --print-out-paths)
+  if [[ ! -f "$store/$kernel_file" ]]; then
+    echo "no architecture-matched kernel $kernel_file in $store" >&2
     ls -la "$store" >&2
     exit 1
   fi
-  cp "$src" "staging/vmlinux-${arch}-${variant}"
+  cp "$store/$kernel_file" "staging/vmlinux-${arch}-${variant}"
   if [[ "$variant" == workload ]]; then
     workload_store="$store"
   fi
@@ -46,7 +39,7 @@ for variant in builder workload rootless; do
   else
     config_ref=".#legacyPackages.${system}.builder-vm.workload-kernel-configfile"
   fi
-  config=$(nix build "$config_ref" --impure --no-link --print-out-paths | head -1)
+  config=$(nix build "$config_ref" --impure --no-link --print-out-paths)
   cp "$config" "staging/${variant}-config-${arch}"
 done
 
@@ -65,14 +58,13 @@ printf '{"kernel_version":"%s","config_hash":"%s","artifact_hash":"%s"}\n' \
   "$kernel_version" "$config_hash" "$artifact_hash" > "staging/kernel-${arch}.json"
 
 symbol_count=$(grep -c '=y$' "$config")
-budget_name="BUDGET_${arch^^}"
-budget=$(grep -oP "${budget_name}: usize = \K[0-9]+" \
-  "$(mvm_source_dir)/xtask/src/kernel_config_budget.rs")
-echo "workload kernel ${arch}: ${symbol_count} =y symbols (budget ${budget})"
-if [[ "$symbol_count" -gt "$budget" ]]; then
-  echo "workload kernel ${arch} has ${symbol_count} built-in symbols, over budget ${budget}" >&2
-  exit 1
-fi
+python3 scripts/check_linux_layer.py --arch "$arch" --kernel-config "$config"
+format=elf
+[[ "$arch" != aarch64 ]] || format=image
+for variant in builder workload rootless; do
+  python3 scripts/check_linux_layer.py --arch "$arch" --format "$format" \
+    --kernel "staging/vmlinux-${arch}-${variant}"
+done
 
 raw_bytes=$(stat -c%s "staging/vmlinux-${arch}-workload")
 gzip_bytes=$(gzip -c "staging/vmlinux-${arch}-workload" | wc -c)

@@ -11,20 +11,14 @@
   # The root flake exposes these packages as `legacyPackages.<system>.builder-vm`;
   # its `default` produces `$out/{vmlinux,rootfs.ext4,cmdline.txt,manifest.json}`.
   #
-  # ── Architecture / workspace staging ──────────────────────────────
-  #
-  # - Stage the pinned `mvm` source via `mvm`'s own workspace filter
-  #   (`nix/lib/workspace-filter.nix`), so the filtered store path is the
-  #   one an in-tree `mvm` build produces for the same commit.
-  # - Call the `mvm` flake's `outputs` directly (`nix/flake.nix`) for
-  #   mkGuest and the guest recipes — no
-  #   flake-input chain, so no path-input lock validation issue.
+  # The local Linux-layer composer owns the root filesystem. No mvm source
+  # or workspace filter participates in evaluation.
   #
   # ── Builder VM package set ────────────────────────────────────────
   #
   # Narrower than the interactive image:
   #
-  # - Static busybox (provides `/bin/sh`, `udhcpc`, `sync`, basic
+  # - Static busybox (provides `/bin/sh`, `sync`, basic
   #   POSIX utilities — small footprint).
   # - Nix (the whole point of the VM).
   # - Bash + coreutils + gnugrep / gnused / gawk / findutils / which
@@ -34,34 +28,19 @@
   # - e2fsprogs (`mkfs.ext4` for the first-boot format of the
   #   persistent `/nix` store) + util-linux (`mount`, `umount`,
   #   `losetup`).
-  # - iproute2 (used by `udhcpc` and friends; small).
+  # - iproute2 (loopback-only setup; never a guest NIC).
   # - **No** `procps`-interactive / `less` — kept slim.
   # - No mvm binary. At builder boot ABI 2 the boot payload supplies
   #   `mvm-host-vm-init`, `mvm-builderd` and `mvm-setpriv`, and the
   #   guest runs them from `/run/mvm/host-bins`.
 
-  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
-  # microvm.nix and the exact `mvm` commit once for every image and calls
-  # `outputs` below with them. This file is not a flake on its own.
+  # Inputs come from this repository's root flake. This is not a flake on its own.
 
   outputs =
-    { self, nixpkgs, microvm, mvm-src, ... }:
+    { self, nixpkgs, microvm, ... }:
     let
       systems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-
-      # The `mvm` source tree at the commit the root flake pins. Everything this
-      # image reads from `mvm` resolves against it; there is no local override.
-      workspaceRoot = mvm-src.outPath;
-
-      # Evaluate the runtime-overlay image against this image's nixpkgs and the
-      # same pinned `mvm` source, so the sidecars it re-exports are the ones the
-      # runtime-overlay image builds.
-      runtimeOverlay =
-        (import ../runtime-overlay/image.nix).outputs {
-          self = { };
-          inherit nixpkgs mvm-src;
-        };
 
       # The builder boot ABI this image is built to (./boot-abi.nix, a bare
       # integer, so the manifest emitters read the same value as text). ABI 2:
@@ -73,40 +52,14 @@
       bootAbi = import ./boot-abi.nix;
       cacheContractVersion = import ./cache-contract.nix;
 
-      # Filter list lives at nix/lib/workspace-filter.nix so the three
-      # flakes that ingest the host workspace (this one, builder/,
-      # runtime-overlay/) stay aligned with .gitignore in one place.
-      workspace =
-        (import (workspaceRoot + "/nix/lib/workspace-filter.nix") {
-          inherit (nixpkgs) lib;
-        })
-        { inherit workspaceRoot; };
-
-      # The `mvm` flake, evaluated against this flake's pinned inputs and the
-      # filtered workspace. mkGuest and the guest recipes come from its
-      # outputs: the interface an image repository pins is the one this
-      # flake already builds through.
-      mvm = (import (workspaceRoot + "/nix/flake.nix")).outputs {
-        self = { };
-        inherit nixpkgs microvm;
-        mvm-workspace = workspace;
-      };
-
-      # Shared kernel-config base. Imported from `nix/images/kernel/base.nix`
-      # relatively (not through `workspace`): importing through `workspace`
-      # forces realisation of that filtered store path, which
-      # `nix flake check --no-build` (the "Nix flake check (Linux eval)"
-      # lane) refuses — so the builder/workload kernel + their configfile
-      # outputs must not route base through it.
-      # The kernel lives in this repository (`kernel/`), not in `mvm`, so it
-      # is imported relative to this file.
+      # Shared, locally owned Linux kernel configuration.
       kernelBaseFor = pkgs:
         import ../../kernel/base.nix { inherit pkgs; };
 
       # veritysetup sidecar bytes must not drift when nixpkgs revs. The
       # OCI-pull path runs `veritysetup format`
       # inside this builder VM, while the Nix-built baseline runs it in
-      # `nix/images/runtime-overlay/flake.nix`. Both flakes intentionally
+      # the tenant image definitions here. These definitions intentionally
       # pin the same cryptsetup release + tarball hash, and both must be
       # reviewed together on bump.
       pinnedCryptsetupVersion = "2.8.6";
@@ -139,12 +92,7 @@
       builderPackages = system: pkgs: with pkgs; [
         bashInteractive
         coreutils
-        # `pkgsStatic.busybox` for the lightweight utilities that
-        # mvm-host-vm-init spawns by absolute path — chiefly
-        # `/sbin/udhcpc` (busybox applet) for DHCP on the builder
-        # VM's eth0. Without busybox in `packages`, mkGuest's
-        # symlink loop (nix/lib/mk-guest.nix:770-788) skips it
-        # and `/sbin/udhcpc` doesn't exist → setup_network bails.
+        # Static POSIX utilities; the builder has no NIC or DHCP path.
         pkgsStatic.busybox
         gnugrep
         gnused
@@ -168,7 +116,7 @@
         # `WorkloadStart` dispatch inside itself. Sourced from the pinned
         # nixpkgs above — an upstream Nix package, never an
         # mvm-published prebuilt (source-checkout rule).
-        # mkGuest's symlink loop also lands it at /sbin/firecracker
+        # The local composer's symlink loop lands it at /sbin/firecracker
         # and /usr/local/bin/firecracker; the `extraFiles` entry
         # below pins the exact /usr/bin/firecracker path the guest
         # hardcodes (`FirecrackerVmm` in mvm-host-vm-init).
@@ -202,14 +150,9 @@
       # - `rootwait` — wait for virtio-blk root enumeration before mounting.
       # - `panic=-1 loglevel=8` — reboot on panic and keep early boot verbose
       #   enough that the host-side console capture has useful crash context.
-      # - `init=/init` alone — at boot ABI 2 the image bakes no mvm binary,
-      #   so there is nothing to chain into: booting the image by itself
-      #   enters the shell-known-good busybox /init. Every real builder boot
-      #   composes its own line from the boot contract (a payload boot names
-      #   mvm.boot=<digest>, which is minted per boot and cannot be recorded
-      #   here); this line is only the cache's shape and what the image would
-      #   boot with alone.
-      builderCmdline = "console=hvc0 root=/dev/vda ro rootfstype=ext4 rootwait panic=-1 loglevel=8 init=/init";
+      # PID 1 is supplied by the CLI's authenticated initramfs. This base is
+      # deliberately not independently bootable through a fallback /init.
+      builderCmdline = "console=hvc0 root=/dev/vda ro rootfstype=ext4 rootwait panic=-1 loglevel=8";
 
       # Extra packages for the interactive (dev) builder VM image.
       # Added on top of `builderPackages` when `interactive = true`.
@@ -230,8 +173,7 @@
 
       # Rootfs builder. The custom kernel under `./kernel` is built
       # `CONFIG_MODULES=n` (everything in-tree is `=y`), so the
-      # rootfs ships no `/lib/modules/<kver>/` tree and mkGuest's
-      # kernel arg goes unused — same rootfs whether we're producing
+      # rootfs ships no `/lib/modules/<kver>/` tree — same rootfs whether producing
       # the full builder-VM image or the Stage 0 seed.
       #
       # mvm binaries (mvm-host-vm-init, mvm-builderd, mvm-setpriv)
@@ -244,28 +186,11 @@
           pkgs = import nixpkgs { inherit system; };
           extraPkgs = if interactive then devPackages pkgs else [ ];
         in
-        mvm.lib.${system}.mkGuest {
+        (import ../mk-rootfs.nix { inherit pkgs; }) {
           name = "mvm-builder-vm";
-          # The builder VM chains from mkGuest's `/init` into
-          # `mvm-host-vm-init` and sources the guest agent + egress-client
-          # from the runtime overlay the host wires in. mkGuest bakes no
-          # guest-runtime binaries into any rootfs, so there is nothing to
-          # opt out of here — Stage 0 never compiles the unused
-          # addon-dns / exit-report fallbacks.
-          # mkGuest requires an entrypoint declaration. At runtime
-          # the kernel cmdline sets `init=/init` and
-          # `mvm.chain_init=/sbin/mvm-host-vm-init`, so mkGuest's
-          # entrypoint is vestigial — but we still
-          # need to declare one to satisfy the type contract.
-          entrypoint.shell = "/bin/sh";
           # Persistent build jobs run as this unprivileged numeric uid. Keep
           # a passwd/group entry so Nix can resolve its home directory.
           builderUid = 902;
-          # ABI 2: mvm-setpriv comes from the boot payload, not the rootfs.
-          # mkGuest then leaves the helper out of the image and its closure,
-          # and its generated scripts name the payload's copy under
-          # /run/mvm/host-bins.
-          withSetpriv = false;
           packages = (builderPackages system pkgs) ++ extraPkgs;
           # /etc/mvm/builder-boot-abi tells the boot contract this
           # image meets ABI 2: PID 1 (mvm-host-vm-init), mvm-builderd and
@@ -274,9 +199,9 @@
           # /usr/bin/firecracker is pinned for the guest's
           # FirecrackerVmm spawn. firecracker is
           # also in `packages` above (for the full closure +
-          # the /sbin + /usr/local/bin symlinks mkGuest adds);
+          # the /sbin + /usr/local/bin symlinks the composer adds);
           # this entry guarantees the canonical /usr/bin path
-          # regardless of mkGuest's symlink targets.
+          # regardless of the other symlink targets.
           extraFiles = {
             "/etc/mvm/builder-boot-abi" = {
               content = "${toString bootAbi}\n";
@@ -309,7 +234,7 @@
           kernelConfig = kernelPkg.passthru.configfile;
           rootfs = mkBuilderVmRootfs { inherit system interactive; };
           kernelFile =
-            if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "bzImage";
+            if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "vmlinux";
           imageName = if interactive
                       then "mvm-builder-vm-dev-${system}"
                       else "mvm-builder-vm-image-${system}";
@@ -332,28 +257,14 @@
             # Kernel.
             if [ -f ${kernelPkg}/${kernelFile} ]; then
               cp ${kernelPkg}/${kernelFile} $out/vmlinux
-            elif [ -f ${kernelPkg}/Image ]; then
-              cp ${kernelPkg}/Image $out/vmlinux
-            elif [ -f ${kernelPkg}/bzImage ]; then
-              cp ${kernelPkg}/bzImage $out/vmlinux
             else
-              echo "kernel package ${kernelPkg} did not produce Image or bzImage" >&2
+              echo "kernel package ${kernelPkg} did not produce ${kernelFile}" >&2
               ls -la ${kernelPkg} >&2
               exit 1
             fi
 
             # Rootfs.
-            if [ -f ${rootfs} ]; then
-              cp ${rootfs} $out/rootfs.ext4
-            else
-              img=$(find ${rootfs} -maxdepth 1 -name '*.img' -o -name '*.ext4' | head -1)
-              if [ -z "$img" ]; then
-                echo "mkGuest output at ${rootfs} contains no .img or .ext4 file" >&2
-                ls -la ${rootfs} >&2
-                exit 1
-              fi
-              cp "$img" $out/rootfs.ext4
-            fi
+            cp ${rootfs} $out/rootfs.ext4
 
             chmod 0644 $out/vmlinux $out/rootfs.ext4
 
@@ -405,17 +316,7 @@
         pkgs.runCommand "mvm-builder-vm-stage0-rootfs-${system}" { } ''
           mkdir -p $out
 
-          if [ -f ${rootfs} ]; then
-            cp ${rootfs} $out/rootfs.ext4
-          else
-            img=$(find ${rootfs} -maxdepth 1 -name '*.img' -o -name '*.ext4' | head -1)
-            if [ -z "$img" ]; then
-              echo "mkGuest output at ${rootfs} contains no .img or .ext4 file" >&2
-              ls -la ${rootfs} >&2
-              exit 1
-            fi
-            cp "$img" $out/rootfs.ext4
-          fi
+          cp ${rootfs} $out/rootfs.ext4
 
           chmod 0644 $out/rootfs.ext4
           echo "${builderCmdline}" > $out/cmdline.txt
@@ -505,17 +406,6 @@
         workload-kernel-configfile = mkWorkloadKernelConfigfile system;
         workload-sizeopt-kernel = mkWorkloadKernelSizeopt system;
         workload-sizeopt-kernel-configfile = mkWorkloadKernelSizeoptConfigfile system;
-        # SDK sidecar images for Stage 0 builds. The builder VM needs the
-        # sidecar to build guest workloads, so this exposes the runtime-overlay's
-        # sdk-sidecar-image outputs through the builder-vm flake.
-        #
-        # Both libc variants are exposed, because which one a workload needs is
-        # a property of the guest image it boots, not of the builder. A guest
-        # linked against the other libc cannot dlopen the cdylib at all, and
-        # exposing only one moves that failure from this evaluation into the
-        # guest, where it surfaces as a relocation error.
-        sdk-sidecar-image = runtimeOverlay.packages.${system}.sdk-sidecar-image;
-        sdk-sidecar-image-musl = runtimeOverlay.packages.${system}.sdk-sidecar-image-musl;
       });
     };
 }

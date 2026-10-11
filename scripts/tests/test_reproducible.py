@@ -10,10 +10,15 @@ class CanonicalReproducibilityTests(unittest.TestCase):
         script = (ROOT / "scripts/check-reproducible.sh").read_text()
         workflow = (ROOT / ".github/workflows/reproduce.yml").read_text()
 
-        for role in ("builder-vm", "default-tenant", "rootless-tenant", "runtime-overlay"):
+        for role in ("builder-vm", "default-tenant", "rootless-tenant"):
             self.assertIn(role, script)
             self.assertIn(role, workflow)
+        for retired in ("runtime-overlay", "initramfs", "sdk-sidecar"):
+            self.assertNotIn(retired, script)
+            self.assertNotIn(retired, workflow)
         self.assertIn("--rebuild", script)
+        self.assertIn('"${ref}.rootfs"', script)
+        self.assertIn("- images/**", workflow)
 
     def test_does_not_compare_with_retired_mvm_image_recipes(self):
         script = (ROOT / "scripts/check-reproducible.sh").read_text()

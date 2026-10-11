@@ -91,7 +91,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(mapping(block(self.lines, "permissions:", 0), 2), {"contents": "read"})
         self.assertEqual(
             mapping(block(self.publish, "permissions:", 4), 6),
-            {"contents": "write", "id-token": "write", "attestations": "write"},
+            {"contents": "write", "actions": "read",
+             "id-token": "write", "attestations": "write"},
         )
         build = block(self.jobs, "build:", 2)
         self.assertEqual(mapping(block(build, "permissions:", 4), 6), {"contents": "read"})
@@ -131,7 +132,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         order = [
             self.position("Assemble the complete image set"),
             self.position("Sign every member pack and the image-set manifest"),
-            self.position("Verify the signed complete set with pinned mvm"),
+            self.position("Verify the signed complete set with authenticated released mvmctl"),
             self.position("Check the provenance subjects"),
             self.position("Attest build provenance"),
             self.position("Publish the immutable GitHub Release"),
@@ -144,6 +145,25 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("cosign sign-blob", sign)
         verify = "\n".join(self.step_named("Verify the signed complete set"))
         self.assertIn("image boot verify --json --require-complete", verify)
+        self.assertIn("scripts/verify-released-consumer.py", verify)
+        self.assertNotIn("cargo build", verify)
+        self.assertNotIn("MVM_SOURCE", "\n".join(self.lines))
+
+    def test_publishing_uses_assembler_subjects_not_a_second_asset_table(self):
+        publish = "\n".join(self.step_named("Publish the immutable GitHub Release"))
+        self.assertIn('done < "$SUBJECTS"', publish)
+        self.assertIn('"${assets[@]}"', publish)
+        self.assertNotIn("release-assets/*", publish)
+
+    def test_consumer_pins_are_required_not_manual_success_evidence(self):
+        verify = self.step_named("Verify the signed complete set")
+        self.assertEqual(mapping(block(verify, "env:", 8), 10), {
+            "GH_TOKEN": "${{ secrets.IMAGE_CONSUMER_READ_TOKEN || github.token }}",
+            "CONSUMER_TAG": "${{ vars.IMAGE_CONSUMER_TAG }}",
+            "CONSUMER_COMMIT": "${{ vars.IMAGE_CONSUMER_COMMIT }}",
+            "CONSUMER_RUN_ID": "${{ vars.IMAGE_CONSUMER_RUN_ID }}",
+        })
+        self.assertNotIn("workflow_dispatch", "\n".join(self.lines))
 
 
 if __name__ == "__main__":

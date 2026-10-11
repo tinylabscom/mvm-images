@@ -3,15 +3,14 @@
 
 Usage:
 
-  scripts/emit-local-manifest.py --mvm-checkout <dir> --arch <aarch64|x86_64> \\
+  scripts/emit-local-manifest.py --arch <aarch64|x86_64> \\
       --builder-cache-contract <n> --out <new dir> \\
       --artifact <role> <format> <path> [--artifact ...] \\
       [--capability <role> <capability> ...] [--images-checkout <dir>]
 
-Images built with `--override-input mvm path:<dir>` come from two working
-trees, neither of them a release. This records exactly which: the commit and
-working-tree state of the mvm-images checkout (by default the one this script
-is in) and of the mvm checkout, next to the digest and size of every artifact,
+Locally composed Linux images come from one working tree, not a release.
+This records the commit and working-tree state of the mvm-images checkout
+(by default the one this script is in), next to each artifact's digest and size,
 the guest architecture and the role each artifact plays.
 
 The output is a directory holding a copy of each artifact under its manifest
@@ -24,11 +23,11 @@ to be a release, and mvm classifies it `local-dev`.
 
 A tree that is not clean is fingerprinted the way mvm fingerprints it — the
 status listing, the diff against HEAD and every untracked file — so mvm can
-tell whether the checkouts still match the manifest when it reads it. Both
-identities are read before the artifacts are copied and again after, and a
+tell whether the checkout still matches the manifest when it reads it. Its
+identity is read before the artifacts are copied and again after, and a
 change in between is refused rather than attributed to either reading.
 
-Nothing is built here, and nothing is discovered: both checkouts and every
+Nothing is built here, and nothing is discovered: the checkout and every
 artifact are named by the caller.
 """
 
@@ -47,7 +46,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # Semver, as the schema requires, and never a version any release is tagged.
 LOCAL_SET_VERSION = "0.0.0-local"
 MANIFEST_NAME = "image-set.json"
@@ -77,11 +76,7 @@ ROLES = {
         False,
         False,
     ),
-    "runtime_overlay": ("runtime_overlay", False, False),
-    "sdk_sidecar_glibc": ({"sdk_sidecar": "glibc"}, False, False),
-    "sdk_sidecar_musl": ({"sdk_sidecar": "musl"}, False, False),
     "stage0_bootstrap_kernel": ("stage0_bootstrap_kernel", True, False),
-    "initramfs": ("initramfs", False, False),
     "qemu_wasm_smoke_pack": ("qemu_wasm_smoke_pack", False, True),
 }
 
@@ -98,16 +93,7 @@ IMAGES_MARKERS = (
     "images/builder-vm/image.nix",
     "images/default-tenant/image.nix",
     "images/rootless-tenant/image.nix",
-    "images/runtime-overlay/image.nix",
-    "images/initramfs/image.nix",
-)
-AGENT_PROTOCOL_SOURCE = "crates/mvm-agentd/src/vsock/mod.rs"
-MVM_MARKERS = (
-    "Cargo.toml",
-    "Cargo.lock",
-    "nix/flake.nix",
-    "crates/mvm-build/Cargo.toml",
-    AGENT_PROTOCOL_SOURCE,
+    "images/base-image-contract.nix",
 )
 FLAKE_LOCKS = ("flake.lock", "kernel/flake.lock")
 
@@ -229,24 +215,12 @@ def checkout_root(given: str, what: str, markers: tuple[str, ...]) -> Path:
     return root
 
 
-def guest_agent_protocol(mvm: Path) -> dict:
-    """The protocol range of the guest agent compiled from this mvm checkout."""
-    source = (mvm / AGENT_PROTOCOL_SOURCE).read_text()
-
-    def constant(name: str) -> int:
-        found = re.findall(rf"^pub const {name}: u32 = (\d+);$", source, re.MULTILINE)
-        if len(found) != 1:
-            raise Refusal(
-                f"{mvm / AGENT_PROTOCOL_SOURCE}: expected one `pub const {name}: u32`, "
-                f"found {len(found)}"
-            )
-        return int(found[0])
-
-    low = constant("MIN_SUPPORTED_PROTOCOL_VERSION")
-    high = constant("PROTOCOL_VERSION")
-    if low < 1 or low > high:
-        raise Refusal(f"guest agent protocol range {low}..={high} is not a valid range")
-    return {"min": low, "max": high}
+def base_image_contract(images: Path) -> int:
+    path = images / "images/base-image-contract.nix"
+    body = path.read_text().strip()
+    if body != "1":
+        raise Refusal(f"unsupported base-image contract in {path}: {body!r}")
+    return int(body)
 
 
 def artifact_format(spec: str):
@@ -308,8 +282,7 @@ def is_within(path: Path, root: Path) -> bool:
 
 
 def output_dir(given: str, checkouts: list[Path]) -> Path:
-    """Where the set goes: a new directory outside both checkouts, since
-    writing into either would change the identity being recorded."""
+    """A new directory outside the checkout whose identity is recorded."""
     out = Path(os.path.realpath(given))
     for root in checkouts:
         if is_within(out, root):
@@ -395,16 +368,15 @@ def builder_boot_abi(images_root: Path) -> int:
 def emit(args) -> Path:
     images_given = args.images_checkout or str(Path(__file__).resolve().parent.parent)
     images = checkout_root(images_given, "mvm-images", IMAGES_MARKERS)
-    mvm = checkout_root(args.mvm_checkout, "mvm", MVM_MARKERS)
     if args.builder_cache_contract < 1:
         raise Refusal("--builder-cache-contract must be a positive integer")
     boot_abi = builder_boot_abi(images)
     if not args.artifact:
         raise Refusal("no --artifact given; a set has at least one member")
-    out = output_dir(args.out, [images, mvm])
+    out = output_dir(args.out, [images])
 
-    before = {"images": repo_identity(images), "mvm": repo_identity(mvm)}
-    protocol = guest_agent_protocol(mvm)
+    before = {"images": repo_identity(images)}
+    contract = base_image_contract(images)
     locks = [
         {"reference": f"mvm-images:{lock}", "lock_hash": sha256_file(images / lock)}
         for lock in FLAKE_LOCKS
@@ -413,7 +385,7 @@ def emit(args) -> Path:
     staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
     try:
         members = build_members(args, staging)
-        after = {"images": repo_identity(images), "mvm": repo_identity(mvm)}
+        after = {"images": repo_identity(images)}
         if after != before:
             raise Refusal(
                 "a checkout changed while the set was being recorded; "
@@ -424,9 +396,8 @@ def emit(args) -> Path:
             "set_version": LOCAL_SET_VERSION,
             "issued_at": issued_at(),
             "producer": {"local_checkouts": before},
-            "mvm_source_commit": before["mvm"]["commit"],
             "compatibility": {
-                "guest_agent_protocol": protocol,
+                "base_image_contract": contract,
                 "builder_cache_contract": args.builder_cache_contract,
                 "builder_boot_abi": boot_abi,
             },
@@ -447,7 +418,6 @@ def parse_args(argv: list[str]):
     parser = argparse.ArgumentParser(
         description="Describe a locally built image set in mvm's manifest schema."
     )
-    parser.add_argument("--mvm-checkout", required=True, help="the local mvm checkout")
     parser.add_argument(
         "--images-checkout",
         help="the mvm-images checkout (default: the one this script is in)",

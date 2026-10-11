@@ -2,9 +2,8 @@
 #
 # Every recipe is a thin wrapper over the documented commands in README.md;
 # keep the two in sync. Images are Linux artifacts, so the `build*` recipes
-# need Nix on Linux or a Linux remote builder. On macOS, use `image-set`,
-# which builds through a paired mvm checkout's builder VM instead of host
-# Nix. `just release-check` is the local gate sequence; `just release <semver>`
+# need Nix on Linux or a configured Linux execution boundary.
+# `just release-check` is the local gate sequence; `just release <semver>`
 # pushes the protected tag whose workflow builds, signs, verifies and publishes
 # one complete image set.
 
@@ -21,18 +20,14 @@ default:
 
 # What one release publishes, and the roles this flake builds. Informational.
 list:
-    @printf 'system detected: %s (override with e.g. `just build runtime-overlay default aarch64-linux`)\n' '{{system}}'
+    @printf 'system detected: %s (override with e.g. `just build default-tenant default aarch64-linux`)\n' '{{system}}'
     @echo 'roles × attrs (.#legacyPackages.<system>.<role>.<attr>):'
     @echo ''
     @echo '  builder-vm       default, dev, stage0-rootfs,'
     @echo '                   builder-kernel, workload-kernel,'
-    @echo '                   kernel-configfile, workload-kernel-configfile,'
-    @echo '                   sdk-sidecar-image{,-musl}   (pure; host binaries arrive in the boot payload)'
-    @echo '  default-tenant   default, dev                 (default needs --impure)'
+    @echo '                   kernel-configfile, workload-kernel-configfile'
+    @echo '  default-tenant   default, dev                 (pure Linux bases)'
     @echo '  rootless-tenant  default, prod, dev, smoke    (generic; no NIC)'
-    @echo '  runtime-overlay  default,'
-    @echo '                   sdk-sidecar-image, sdk-sidecar-image-musl'
-    @echo '  initramfs        default'
     @echo ''
     @echo '  kernels:  nix build ./kernel#workload-vmlinux | ./kernel#<attr>'
     @echo '            (kernel/ is a flake of its own; see kernel/flake.nix)'
@@ -60,17 +55,9 @@ kernel attr="workload-vmlinux":
 
 # Build the builder VM. At boot ABI 2 the image bakes no mvm binary — the
 # boot contract supplies all of them from mvmctl's payload at boot — so the eval
-# is pure and no zig toolchain or MVM_HOST_BIN_DIR is involved. Defaults to
-# the pinned mvm commit; pass an mvm checkout to evaluate against it instead.
-builder-vm mvm_checkout="" target=arch:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -n "{{mvm_checkout}}" ]; then
-        mvm="$(cd '{{mvm_checkout}}' && pwd -P)"
-        nix build ".#legacyPackages.{{system}}.builder-vm.default" --override-input mvm "path:$mvm"
-    else
-        nix build ".#legacyPackages.{{system}}.builder-vm.default"
-    fi
+# is pure and has no mvm source or host binary dependency.
+builder-vm target=arch:
+    nix build ".#legacyPackages.{{target}}-linux.builder-vm.default"
 
 # Build every release-bearing output for this machine's guest architecture.
 # CI runs this build surface on both x86_64 and aarch64 before a release.
@@ -84,17 +71,12 @@ build-all target=arch:
         exit 2
     fi
     system="{{target}}-linux"
-    just builder-vm '' '{{target}}'
+    just builder-vm '{{target}}'
     nix build \
       ".#legacyPackages.${system}.builder-vm.stage0-rootfs" \
-      ".#legacyPackages.${system}.runtime-overlay.default" \
-      ".#legacyPackages.${system}.runtime-overlay.sdk-sidecar-image" \
-      ".#legacyPackages.${system}.runtime-overlay.sdk-sidecar-image-musl" \
-      ".#legacyPackages.${system}.initramfs.default"
-    nix build \
       ".#legacyPackages.${system}.default-tenant.default" \
-      ".#legacyPackages.${system}.rootless-tenant.default" \
-      --impure
+      ".#legacyPackages.${system}.default-tenant.dev" \
+      ".#legacyPackages.${system}.rootless-tenant.default"
     nix build \
       "./kernel#packages.${system}.builder-vmlinux" \
       "./kernel#packages.${system}.workload-vmlinux" \
@@ -103,30 +85,10 @@ build-all target=arch:
         nix build ".#legacyPackages.${system}.qemu-wasm.qemu-wasm-smoke-pack"
     fi
 
-# Build one role against a paired local mvm checkout, uncommitted edits
-# included (README "Working on images"). `just with-mvm ../mvm runtime-overlay`
-with-mvm mvm role attr="default" system=system:
-    nix build ".#legacyPackages.{{system}}.{{role}}.{{attr}}" --override-input mvm "path:$(cd '{{mvm}}' && pwd -P)"
-
-# Build one role through a paired mvm checkout's builder VM, on a host with
-# no Nix (the W5e path; publishes into mvm's local image cache at the
-# local-dev tier). `just image-set ../mvm default-tenant`
-image-set mvm="../mvm" role="default-tenant" attr="default":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mvm="$(cd '{{mvm}}' && pwd -P)"
-    if [ ! -x "$mvm/bin/dev" ]; then
-        echo "image-set: $mvm has no bin/dev (mvm at or past the W5e build verb is required)" >&2
-        exit 2
-    fi
-    MVM_IMAGES_DIR="$(pwd -P)" exec "$mvm/bin/dev" build image-set "{{role}}" --attr "{{attr}}"
-
 # The local pre-publish gate sequence. The tag workflow repeats the release
 # critical checks after building both architectures and before publication.
 release-check:
     scripts/check-action-pins.sh
-    scripts/check-source-drift.sh
-    scripts/check-local-mvm-override.sh '{{system}}'
     scripts/check_no_network_devices.py
     scripts/check_rootless_tenant.py
     python3 -m unittest discover -s scripts/tests -v
@@ -208,13 +170,12 @@ e2e-qemu-wasm pack chrome:
     scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'
 
 # Rebuild one canonical role byte-for-byte — the reproduce.yml lane by hand.
-# builder-vm evaluates pure; the tenant roles read MVM_BOOT_IMAGE_TAG.
+# All Linux roles evaluate without mvm source.
 reproduce target role out_dir:
     scripts/check-reproducible.sh '{{target}}' '{{role}}' '{{out_dir}}'
 
 # Describe a built set in the manifest schema mvm parses, into a new directory
-# (local_checkouts producer, local-dev tier; mvm refuses it once either
-# checkout moves). Pass-through over scripts/emit-local-manifest.py; see the
-# README example for the full artifact set of one role.
+# (local_checkouts producer, local-dev tier; images checkout identity only).
+# Pass-through over scripts/emit-local-manifest.py.
 manifest *args:
     scripts/emit-local-manifest.py "$@"

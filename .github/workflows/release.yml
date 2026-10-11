@@ -3,7 +3,7 @@ name: Release image set
 # A release tag is a request to build a candidate, not permission to publish a
 # partial result. The reusable build workflow must finish every architecture
 # and role before this job can enter the protected image-release environment.
-# Assembly then refuses missing bytes, and mvm's pinned verifier independently
+# Assembly then refuses missing bytes, and an authenticated released verifier independently
 # checks the signed manifest, current-train completeness, lock and artifact
 # digests before `gh release create` is allowed to run. Only a verified set is
 # given a build-provenance attestation, and only an attested set is published.
@@ -32,6 +32,7 @@ jobs:
     environment: image-release
     permissions:
       contents: write
+      actions: read
       # Sigstore keyless OIDC, for both the cosign signatures and the
       # build-provenance attestation.
       id-token: write
@@ -55,19 +56,23 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-assets
+          pattern: linux-layer-*
           merge-multiple: true
+      - name: Download the completed browser pack
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: qemu-wasm-site-pack
+          path: release-assets
       - name: Install pinned Nix and cosign
         uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-      - name: Resolve the pinned mvm verifier source
+      - name: Install the pinned cosign tool
         run: |
           set -euo pipefail
-          . scripts/mvm-source.sh
-          printf 'MVM_SOURCE=%s\n' "$(mvm_source_dir)" >> "$GITHUB_ENV"
           nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
           nix profile install "github:NixOS/nixpkgs/${nixpkgs_rev}#cosign"
       # The assembler also writes the build-provenance subjects: every member
       # artifact, pack manifest and SBOM, and image-set.json. It writes them
-      # outside release-assets, which is published whole.
+      # outside release-assets; publication uses it as the asset allowlist.
       - name: Assemble the complete image set
         id: assemble
         env:
@@ -82,7 +87,6 @@ jobs:
             --tag "$TAG" \
             --source-commit "$source_commit" \
             --issued-at "$issued_at" \
-            --mvm-source "$MVM_SOURCE" \
             --subjects "$subjects"
           printf 'subjects=%s\n' "$subjects" >> "$GITHUB_OUTPUT"
       - name: Sign every member pack and the image-set manifest
@@ -97,13 +101,20 @@ jobs:
               --bundle "${manifest}.bundle" \
               "$manifest"
           done
-      - name: Verify the signed complete set with pinned mvm
+      - name: Verify the signed complete set with authenticated released mvmctl
+        env:
+          GH_TOKEN: ${{ secrets.IMAGE_CONSUMER_READ_TOKEN || github.token }}
+          CONSUMER_TAG: ${{ vars.IMAGE_CONSUMER_TAG }}
+          CONSUMER_COMMIT: ${{ vars.IMAGE_CONSUMER_COMMIT }}
+          CONSUMER_RUN_ID: ${{ vars.IMAGE_CONSUMER_RUN_ID }}
         run: |
           set -euo pipefail
-          export CARGO_TARGET_DIR="$RUNNER_TEMP/mvm-target"
-          cargo build --locked --release --manifest-path "$MVM_SOURCE/Cargo.toml" \
-            -p mvmctl --features user
-          "$CARGO_TARGET_DIR/release/mvmctl" image boot verify --json --require-complete \
+          # Pins select a real release and its post-publication evidence, not
+          # a bypass. Missing pins, evidence, signatures or attestations refuse.
+          python3 scripts/verify-released-consumer.py \
+            --tag "$CONSUMER_TAG" --commit "$CONSUMER_COMMIT" --run-id "$CONSUMER_RUN_ID" \
+            --out "$RUNNER_TEMP/released-consumer"
+          "$RUNNER_TEMP/released-consumer/mvmctl" image boot verify --json --require-complete \
             --manifest release-assets/image-set.json \
             --bundle release-assets/image-set.json.bundle \
             --lock release-assets/images.lock \
@@ -128,10 +139,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          SUBJECTS: ${{ steps.assemble.outputs.subjects }}
         run: |
           set -euo pipefail
           version=${TAG#image-set/}
-          gh release create "$TAG" release-assets/* \
+          # The assembler's subjects are the one member/asset source of truth.
+          # Diagnostic workflow artifacts are never published as unowned bytes.
+          assets=()
+          while read -r digest name; do
+            assets+=("release-assets/$name")
+            if [[ -f "release-assets/$name.bundle" ]]; then
+              assets+=("release-assets/$name.bundle")
+            fi
+          done < "$SUBJECTS"
+          assets+=("release-assets/images.lock")
+          gh release create "$TAG" "${assets[@]}" \
             --verify-tag \
             --title "mvm image set ${version}" \
             --generate-notes

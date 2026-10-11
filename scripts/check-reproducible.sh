@@ -3,7 +3,7 @@
 # final derivation to be byte-for-byte reproducible.
 #
 # Usage: scripts/check-reproducible.sh \
-#   <aarch64|x86_64> <builder-vm|default-tenant|rootless-tenant|runtime-overlay> <out-dir>
+#   <aarch64|x86_64> <builder-vm|default-tenant|rootless-tenant> <out-dir>
 #
 # The builder role evaluates pure: at boot ABI 2 it bakes no mvm binary —
 # the boot contract supplies them from mvmctl's payload — so it
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-arch="${1:?usage: check-reproducible.sh <arch> <builder-vm|default-tenant|rootless-tenant|runtime-overlay> <out-dir>}"
+arch="${1:?usage: check-reproducible.sh <arch> <builder-vm|default-tenant|rootless-tenant> <out-dir>}"
 role="${2:?role}"
 out="${3:?out dir}"
 system="${arch}-linux"
@@ -33,14 +33,9 @@ case "$role" in
     attrs=(default)
     impure=(--impure)
     ;;
-  runtime-overlay)
-    attrs=(default)
-    impure=()
-    ;;
   *) echo "unsupported role: $role" >&2; exit 2 ;;
 esac
 
-unset MVM_WORKSPACE_PATH
 mkdir -p "$out"
 nix_cmd=(nix --extra-experimental-features "nix-command flakes")
 
@@ -53,7 +48,11 @@ for attr in "${attrs[@]}"; do
   witness="${out}/${role}.${attr}.${arch}"
 
   drv=$("${nix_cmd[@]}" eval "${impure[@]}" --raw "${ref}.drvPath")
-  first=$("${nix_cmd[@]}" build "${impure[@]}" --no-link --print-out-paths -L "$ref" | head -1)
+  first=$("${nix_cmd[@]}" build "${impure[@]}" --no-link --print-out-paths -L "$ref")
+  if [[ ! -d "$first" ]]; then
+    echo "expected one image output directory for $ref, got: $first" >&2
+    exit 1
+  fi
   printf '%s\n' "$drv" > "${witness}.drvpath"
   files_digest "$first" > "${witness}.sha256"
 
@@ -61,8 +60,10 @@ for attr in "${attrs[@]}"; do
   echo "derivation: $drv"
   cat "${witness}.sha256"
 
-  # --rebuild ignores an existing result and asks Nix to compare the new bytes
-  # with the registered output, failing if the final derivation is not stable.
+  # Rebuilding the wrapper alone would copy its cached root filesystem and
+  # never exercise composition. Reproduce that derivation before the wrapper.
+  "${nix_cmd[@]}" build "${impure[@]}" --no-link --rebuild -L "${ref}.rootfs"
+  # --rebuild compares new bytes with the registered output.
   "${nix_cmd[@]}" build "${impure[@]}" --no-link --rebuild -L "$ref"
   echo "rebuild: bit-identical"
 
@@ -71,8 +72,7 @@ for attr in "${attrs[@]}"; do
   mkdir -p "$stage"
   for file in \
     vmlinux kernel.img rootfs.ext4 rootfs.verity rootfs.roothash \
-    mvm-meta.json cmdline.txt manifest.json \
-    overlay.ext4 overlay.verity overlay.roothash VERSION
+    mvm-meta.json cmdline.txt manifest.json
   do
     if [ -e "$first/$file" ]; then
       cp -L "$first/$file" "$stage/$file"

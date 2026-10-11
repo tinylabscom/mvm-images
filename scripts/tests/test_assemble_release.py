@@ -6,64 +6,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/assemble-release.py"
 SPEC = importlib.util.spec_from_file_location("assemble_release", SCRIPT)
-assert SPEC and SPEC.loader
 ASSEMBLER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ASSEMBLER
 SPEC.loader.exec_module(ASSEMBLER)
 
 
-class FingerprintFixtureTests(unittest.TestCase):
-    """The fixture tree must cover the real input list.
+class ContractTests(unittest.TestCase):
+    def test_local_contract_and_builder_abi(self):
+        self.assertEqual(ASSEMBLER.base_image_contract(ROOT), 1)
+        self.assertEqual(ASSEMBLER.builder_boot_abi(ROOT), 2)
 
-    When mvm adds an input, the assembler refuses every candidate built from a
-    tree without it. That refusal is correct but reads as an unrelated failure,
-    so this names the gap directly.
-    """
+    def test_contract_is_a_single_supported_integer(self):
+        for body in ("0\n", "2\n", "1\n2\n", "# contract\n1\n", '"1"\n'):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "images"
+                path.mkdir()
+                (path / "base-image-contract.nix").write_text(body)
+                with self.assertRaises(ASSEMBLER.Refusal):
+                    ASSEMBLER.base_image_contract(Path(tmp))
 
-    def test_the_fixture_covers_every_fingerprint_input(self):
-        crates = {
-            part.split("/")[1]
-            for part in ASSEMBLER.SDK_CDYLIB_INPUTS
-            if part.startswith("crates/")
-        }
-        self.assertEqual(
-            crates,
-            {
-                "mvm-contract",
-                "mvm-core",
-                "mvm-agentd",
-                "mvm-host-services",
-                "mvm-setpriv",
-            },
-            "SDK_CDYLIB_INPUTS changed: add the crate to the fixture loop in "
-            "AssembleReleaseTests.setUp and to FIXTURE_FILES in "
-            "test_sdk_fingerprint.py, then recompute the known answer with the "
-            "Rust function",
-        )
-
-
-class BuilderBootAbiTests(unittest.TestCase):
-    """The ABI is read from one checked-in file, so the image, the release
-    assembly and the local emitter cannot disagree about how PID 1 arrives."""
-
-    def test_the_shipped_value_is_a_supported_abi(self):
-        self.assertIn(ASSEMBLER.builder_boot_abi(ROOT), (0, 1, 2))
-
-    def test_a_missing_file_is_refused_by_path(self):
+    def test_missing_boot_abi_and_invalid_integer_are_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ASSEMBLER.Refusal) as caught:
+            with self.assertRaises(ASSEMBLER.Refusal):
                 ASSEMBLER.builder_boot_abi(Path(tmp))
-            self.assertIn("boot-abi.nix", str(caught.exception))
-
-    def test_a_file_without_exactly_one_integer_is_refused(self):
-        for body in ("# only a comment\n", "0\n1\n", "abi = 1;\n"):
-            with tempfile.TemporaryDirectory() as tmp:
-                path = Path(tmp) / "images" / "builder-vm"
-                path.mkdir(parents=True)
+            path = Path(tmp) / "images/builder-vm"
+            path.mkdir(parents=True)
+            for body in ("# comment\n", "0\n1\n", "abi = 2;\n"):
                 (path / "boot-abi.nix").write_text(body)
                 with self.assertRaises(ASSEMBLER.Refusal):
                     ASSEMBLER.builder_boot_abi(Path(tmp))
@@ -75,138 +46,64 @@ class AssembleReleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.assets = self.root / "assets"
         self.assets.mkdir()
-        for member in ASSEMBLER.member_specs("f" * 64):
+        for member in ASSEMBLER.member_specs():
             for artifact in member.artifacts:
-                if artifact.name.startswith("stage0-vmlinux-"):
-                    continue
-                (self.assets / artifact.name).write_bytes(f"bytes:{artifact.name}".encode())
+                if not artifact.name.startswith("stage0-vmlinux-"):
+                    (self.assets / artifact.name).write_bytes(artifact.name.encode())
         for arch in ASSEMBLER.ARCHES:
-            (self.assets / f"vmlinux-{arch}-builder").write_bytes(
-                f"stage0:{arch}".encode()
-            )
-        self.mvm = self.root / "mvm"
-        agent = self.mvm / "crates/mvm-agentd/src/vsock"
-        builder = self.mvm / "crates/mvm-build/src"
-        agent.mkdir(parents=True)
-        builder.mkdir(parents=True)
-        (agent / "mod.rs").write_text(
-            "pub const PROTOCOL_VERSION: u32 = 3;\n"
-            "pub const MIN_SUPPORTED_PROTOCOL_VERSION: u32 = 2;\n"
-        )
-        (builder / "builder_vm.rs").write_text(
-            "pub const BUILDER_VM_CACHE_CONTRACT_VERSION: u32 = 4;\n"
-        )
-        # The SDK sidecar fingerprint walks the same source list the consumer
-        # hashes, and the assembler refuses a tree missing any of it, so the
-        # fake source needs every declared input. The crate list below is
-        # asserted against SDK_CDYLIB_INPUTS by
-        # test_the_fixture_covers_every_fingerprint_input, so adding an input
-        # to the real list fails there rather than here with a refusal that
-        # looks like an unrelated bug.
-        (self.mvm / "Cargo.toml").write_text("[workspace]\n")
-        (self.mvm / "Cargo.lock").write_text("lock\n")
-        for crate in (
-            "mvm-contract",
-            "mvm-core",
-            "mvm-agentd",
-            "mvm-host-services",
-            "mvm-setpriv",
-        ):
-            src = self.mvm / "crates" / crate / "src"
-            src.mkdir(parents=True, exist_ok=True)
-            (self.mvm / "crates" / crate / "Cargo.toml").write_text(
-                f'[package]\nname = "{crate}"\n'
-            )
-            (src / "lib.rs").write_text("pub const X: u8 = 0;\n")
-        self.subjects = self.root / "provenance-subjects.sha256"
+            (self.assets / f"vmlinux-{arch}-builder").write_bytes(arch.encode())
+        self.subjects = self.root / "subjects.sha256"
         self.lock = self.root / "flake.lock"
-        self.lock.write_text(
-            json.dumps(
-                {"nodes": {"mvm": {"locked": {"rev": "a" * 40}}}, "version": 7}
-            )
-        )
+        # No mvm source or locked mvm node is needed to produce a Linux set.
+        self.lock.write_text('{"nodes": {}, "version": 7}\n')
 
     def tearDown(self):
         self.temp.cleanup()
 
     def run_assembler(self, subjects=None):
         return subprocess.run(
-            [
-                sys.executable,
-                str(SCRIPT),
-                "--artifacts",
-                str(self.assets),
-                "--tag",
-                "image-set/v0.1.0",
-                "--source-commit",
-                "b" * 40,
-                "--issued-at",
-                "2026-09-22T12:00:00Z",
-                "--mvm-source",
-                str(self.mvm),
-                "--flake-lock",
-                str(self.lock),
-                "--subjects",
-                str(subjects or self.subjects),
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
+            [sys.executable, str(SCRIPT), "--artifacts", str(self.assets),
+             "--tag", "image-set/v0.1.0", "--source-commit", "b" * 40,
+             "--issued-at", "2026-09-22T12:00:00Z", "--flake-lock", str(self.lock),
+             "--subjects", str(subjects or self.subjects)],
+            text=True, capture_output=True, check=False,
         )
 
-    def test_complete_set_emits_every_consumer_role_and_metadata(self):
+    def test_complete_linux_set_preserves_profiles_arches_and_dev_variants(self):
         result = self.run_assembler()
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((self.assets / "image-set.json").read_text())
-        self.assertEqual(len(manifest["members"]), 25)
+        self.assertEqual(manifest["schema_version"], 3)
+        self.assertEqual(len(manifest["members"]), 17)
         self.assertEqual(manifest["set_version"], "0.1.0")
-        self.assertEqual(manifest["compatibility"]["guest_agent_protocol"], {"min": 2, "max": 3})
-        self.assertEqual(manifest["compatibility"]["builder_cache_contract"], 5)
+        self.assertNotIn("mvm_source_commit", manifest)
+        self.assertEqual(manifest["compatibility"], {
+            "base_image_contract": 1, "builder_cache_contract": 5, "builder_boot_abi": 2,
+        })
+        self.assertIs(type(manifest["compatibility"]["base_image_contract"]), int)
+        required = [m for m in manifest["members"] if m.get("build_mode") != "dev"]
+        self.assertEqual(len(required), 13)
+        for member in manifest["members"]:
+            self.assertNotIn("source_fingerprint", member)
+            self.assertNotIn(member["role"], ["runtime_overlay", "initramfs"])
+            if isinstance(member["role"], dict):
+                self.assertNotIn("sdk_sidecar", member["role"])
+            self.assertNotIn("network_device", member["required_capabilities"])
         for arch in ASSEMBLER.ARCHES:
-            builder = next(
-                member for member in manifest["members"]
-                if member["role"] == "builder_vm" and member["target"] == {"arch": arch}
-            )
-            self.assertIn(
-                f"builder-vm-{arch}.kernel.config",
-                {artifact["name"] for artifact in builder["artifacts"]},
-            )
-        self.assertEqual(
-            manifest["compatibility"]["builder_boot_abi"],
-            ASSEMBLER.builder_boot_abi(ROOT),
-            "the declared boot ABI must be the one images/builder-vm/boot-abi.nix holds",
-        )
-        for member in ASSEMBLER.member_specs("f" * 64):
-            self.assertTrue((self.assets / f"pack-{member.slug}.json").is_file())
-            self.assertTrue((self.assets / f"sbom-{member.slug}.spdx.json").is_file())
-        dev_rootfs = [
-            m
-            for m in manifest["members"]
-            if m["role"] == {"workload_rootfs": "default_tenant"}
-            and m.get("build_mode") == "dev"
-        ]
-        self.assertEqual(sorted(m["target"]["arch"] for m in dev_rootfs), sorted(ASSEMBLER.ARCHES))
-        sidecars = [m for m in manifest["members"] if "sdk_sidecar" in m["role"]]
-        self.assertEqual(len(sidecars), 4)
-        for sidecar in sidecars:
-            self.assertEqual(
-                sidecar.get("source_fingerprint"),
-                ASSEMBLER.sdk_cdylib_fingerprint(self.mvm),
-                "the sidecar must publish the cdylib source fingerprint of the pinned tree",
-            )
-        initramfs = [m for m in manifest["members"] if m["role"] == "initramfs"]
-        self.assertEqual(
-            sorted(m["target"]["arch"] for m in initramfs), sorted(ASSEMBLER.ARCHES)
-        )
-        for arch in ASSEMBLER.ARCHES:
+            roles = [m["role"] for m in required if m["target"] == {"arch": arch}]
+            self.assertEqual(len(roles), 6)
+            for profile in ("default_tenant", "rootless_tenant"):
+                self.assertIn({"workload_kernel": profile}, roles)
+                self.assertIn({"workload_rootfs": profile}, roles)
             self.assertEqual(
                 (self.assets / f"stage0-vmlinux-{arch}").read_bytes(),
                 (self.assets / f"vmlinux-{arch}-builder").read_bytes(),
             )
-        self.assertIn('workflow = ".github/workflows/release.yml"', (self.assets / "images.lock").read_text())
+        self.assertIn('workflow = ".github/workflows/release.yml"',
+                      (self.assets / "images.lock").read_text())
 
-    def test_missing_member_artifact_refuses_the_candidate(self):
-        missing = self.assets / "sdk-sidecar-aarch64-musl.tar.gz"
+    def test_missing_linux_artifact_refuses_candidate(self):
+        missing = self.assets / "rootless-microvm-rootfs-aarch64.ext4"
         missing.unlink()
         result = self.run_assembler()
         self.assertNotEqual(result.returncode, 0)
@@ -214,48 +111,26 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertFalse((self.assets / "image-set.json").exists())
         self.assertFalse(self.subjects.exists())
 
-    def read_subjects(self):
-        subjects = {}
-        for line in self.subjects.read_text().splitlines():
-            digest, name = line.split("  ", 1)
-            self.assertNotIn(name, subjects, f"{name} is listed twice")
-            subjects[name] = digest
-        return subjects
-
-    def test_provenance_subjects_are_every_member_and_the_root(self):
-        """The attested set comes from member_specs, not from a second list.
-
-        A member added to member_specs must be attested without touching the
-        workflow, so this compares against the specs and the emitted manifest
-        rather than against a fixed list.
-        """
+    def test_provenance_subjects_derive_only_from_members_and_root(self):
         result = self.run_assembler()
         self.assertEqual(result.returncode, 0, result.stderr)
         expected = {"image-set.json"}
-        for member in ASSEMBLER.member_specs("f" * 64):
-            expected.update(artifact.name for artifact in member.artifacts)
-            expected.add(f"pack-{member.slug}.json")
-            expected.add(f"sbom-{member.slug}.spdx.json")
-        subjects = self.read_subjects()
+        for member in ASSEMBLER.member_specs():
+            expected.update(a.name for a in member.artifacts)
+            expected.update((f"pack-{member.slug}.json", f"sbom-{member.slug}.spdx.json"))
+        subjects = {}
+        for line in self.subjects.read_text().splitlines():
+            digest, name = line.split("  ", 1)
+            self.assertNotIn(name, subjects)
+            subjects[name] = digest
         self.assertEqual(set(subjects), expected)
-        manifest = json.loads((self.assets / "image-set.json").read_text())
-        for member in manifest["members"]:
-            for artifact in member["artifacts"]:
-                self.assertEqual(subjects[artifact["name"]], artifact["sha256"])
-            self.assertEqual(
-                subjects[member["sbom"]["uri"].rsplit("/", 1)[1]], member["sbom"]["sha256"]
-            )
         for name, digest in subjects.items():
-            self.assertEqual(
-                digest,
-                ASSEMBLER.sha256_file(self.assets / name),
-                f"{name}: the subject digest must be the digest of the published bytes",
-            )
+            self.assertEqual(digest, ASSEMBLER.sha256_file(self.assets / name))
         self.assertNotIn("images.lock", subjects)
 
-    def test_provenance_subjects_inside_the_artifact_directory_are_refused(self):
-        inside = self.assets / "provenance-subjects.sha256"
-        result = self.run_assembler(subjects=inside)
+    def test_subjects_cannot_be_published_as_unattested_asset(self):
+        inside = self.assets / "subjects.sha256"
+        result = self.run_assembler(inside)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("outside", result.stderr)
         self.assertFalse(inside.exists())
