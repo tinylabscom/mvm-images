@@ -855,6 +855,15 @@ let
             echo "Firecracker's x86_64 loader takes an uncompressed ELF vmlinux only." >&2
             exit 1
           fi
+          # QEMU's -kernel loads this ELF only through the PVH entry note
+          # (owner Xen, type 0x12, XEN_ELFNOTE_PHYS32_ENTRY). CONFIG_PVH emits
+          # it; assert it survived into the extracted ELF.
+          if ! ''${READELF:-readelf} -n "$out/vmlinux" \
+            | grep -Eq '^[[:space:]]*Xen[[:space:]]+0x[0-9a-f]+[[:space:]]+(Unknown note type: \(0x00000012\)|XEN_ELFNOTE_PHYS32_ENTRY)'; then
+            echo "ERROR: $out/vmlinux carries no PVH entry note (Xen 0x12)." >&2
+            echo "qemu-system-x86_64 -kernel refuses an uncompressed kernel without it." >&2
+            exit 1
+          fi
         '';
       });
 
