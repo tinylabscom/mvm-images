@@ -66,24 +66,28 @@ class E2EBootPlanTests(unittest.TestCase):
             self.assertFalse(any("vhost-vsock" in arg for arg in command))
         e2e_boot.assert_no_network_devices(command)
 
-    def test_qemu_runtime_overlay_is_read_only_second_block_device(self):
+    def test_qemu_boots_the_init_the_image_owns(self):
         command = e2e_boot.qemu_command(
             binary="qemu-system-x86_64",
             kernel=Path("kernel.img"),
             rootfs=Path("rootfs.ext4"),
-            runtime_overlay=Path("runtime-overlay.ext4"),
+            guest_cid=9,
+            init="/usr/local/bin/mvm-rootless-probe",
+        )
+        cmdline = command[command.index("-append") + 1]
+        self.assertIn("init=/usr/local/bin/mvm-rootless-probe", cmdline.split())
+        self.assertNotIn("mvm.", cmdline)
+        self.assertEqual(1, sum(arg.startswith("virtio-blk-pci") for arg in command))
+
+    def test_default_init_is_the_smoke_image_busybox_init(self):
+        command = e2e_boot.qemu_command(
+            binary="qemu-system-x86_64",
+            kernel=Path("kernel.img"),
+            rootfs=Path("rootfs.bin"),
             guest_cid=9,
         )
-        self.assertTrue(any("mvm.runtime_data=/dev/vdb" in arg for arg in command))
-        self.assertTrue(
-            any("mvm.runtime_source_policy=required_overlay" in arg for arg in command)
-        )
-        self.assertIn(
-            "id=runtime,file=runtime-overlay.ext4,format=raw,if=none,readonly=on",
-            command,
-        )
-        self.assertIn("virtio-blk-pci,drive=runtime", command)
-        e2e_boot.assert_no_network_devices(command)
+        cmdline = command[command.index("-append") + 1]
+        self.assertIn(f"init={e2e_boot.DEFAULT_INIT}", cmdline.split())
 
     def test_firecracker_plan_has_vsock_and_no_network_interfaces(self):
         config = e2e_boot.firecracker_config(
@@ -96,30 +100,57 @@ class E2EBootPlanTests(unittest.TestCase):
         self.assertNotIn("network-interfaces", config)
         e2e_boot.assert_no_network_devices(config)
 
-    def test_firecracker_runtime_overlay_is_read_only_second_block_device(self):
+    def test_firecracker_boots_the_init_the_image_owns_from_one_drive(self):
         config = e2e_boot.firecracker_config(
             kernel=Path("vmlinux"),
             rootfs=Path("rootfs.ext4"),
-            runtime_overlay=Path("runtime-overlay.ext4"),
             vsock_path=Path("vsock.sock"),
             guest_cid=9,
+            init="/usr/local/bin/mvm-rootless-probe",
         )
-        self.assertIn("mvm.runtime_data=/dev/vdb", config["boot-source"]["boot_args"])
-        self.assertIn(
-            "mvm.runtime_source_policy=required_overlay",
-            config["boot-source"]["boot_args"],
-        )
-        self.assertEqual(
-            {
-                "drive_id": "runtime",
-                "path_on_host": "runtime-overlay.ext4",
-                "is_root_device": False,
-                "is_read_only": True,
-            },
-            config["drives"][1],
-        )
+        boot_args = config["boot-source"]["boot_args"].split()
+        self.assertIn("init=/usr/local/bin/mvm-rootless-probe", boot_args)
+        self.assertFalse(any(arg.startswith("mvm.") for arg in boot_args))
+        self.assertEqual(["rootfs"], [d["drive_id"] for d in config["drives"]])
         self.assertNotIn("network-interfaces", config)
         e2e_boot.assert_no_network_devices(config)
+
+    def test_mkguest_shell_init_is_refused(self):
+        for builder in (
+            lambda: e2e_boot.qemu_command(
+                binary="qemu-system-x86_64",
+                kernel=Path("kernel.img"),
+                rootfs=Path("rootfs.bin"),
+                guest_cid=9,
+                init="/init",
+            ),
+            lambda: e2e_boot.firecracker_config(
+                kernel=Path("vmlinux"),
+                rootfs=Path("rootfs.bin"),
+                vsock_path=Path("vsock.sock"),
+                guest_cid=9,
+                init="/init",
+            ),
+        ):
+            with self.assertRaises(e2e_boot.E2EError):
+                builder()
+
+    def test_init_must_be_one_absolute_path(self):
+        for init in ("sbin/init", "/sbin/init mvm.runtime_data=/dev/vdb"):
+            with self.assertRaises(e2e_boot.E2EError):
+                e2e_boot.firecracker_config(
+                    kernel=Path("vmlinux"),
+                    rootfs=Path("rootfs.bin"),
+                    vsock_path=Path("vsock.sock"),
+                    guest_cid=9,
+                    init=init,
+                )
+
+    def test_harness_and_recipes_carry_no_guest_runtime_token(self):
+        for relative in ("scripts/e2e_boot.py", "justfile"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            for token in ("init=/init", "mvm.runtime_", "--runtime-overlay"):
+                self.assertNotIn(token, source, f"{relative} carries {token}")
 
     def test_guard_rejects_qemu_network_device(self):
         with self.assertRaises(e2e_boot.E2EError):

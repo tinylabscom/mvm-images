@@ -142,10 +142,9 @@ repository. Boot tests invoke the VMM directly against artifacts built here.
 Every VMM plan must use an explicit device list, attach vsock, and contain no
 network interface or NIC/TAP/TUN fallback. Keep the fast Gherkin contracts in
 the ordinary pull-request gate and run real boot probes on capable runners.
-The rootless smoke variant must directly witness uid 1000, namespace creation,
-delegated cgroup v2, its generic OCI tools, and loopback-only networking. It
-must not use `mvm` as a test harness.
-Today the rootless witness attaches the runtime overlay as a second block
-device; under #49 boot witnesses switch to a small test init and stop
-depending on any `mvm`-built bytes. Do not add a new witness that needs the
-overlay.
+The rootless smoke variant must directly witness the workload identity (uid
+901), namespace creation, delegated cgroup v2, its generic OCI tools, and
+loopback-only networking. It must not use `mvm` as a test harness.
+Boot witnesses boot an init the smoke image owns (`init=<path>`), never
+`mkGuest`'s shell `/init`, and attach no runtime overlay or other `mvm`-built
+bytes. Do not add a witness that needs them.

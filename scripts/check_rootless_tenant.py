@@ -87,18 +87,33 @@ def check_rootless_contract() -> None:
         )
     require(rootless_kernel, "kernel/rootless.nix", ('requiredExtraDisables = [ "NET_NS" ];',))
     require(
-        e2e_harness,
-        "scripts/e2e_boot.py",
-        (
-            "mvm.runtime_data=/dev/vdb",
-            "mvm.runtime_source_policy=required_overlay",
-            '"is_read_only": True',
-        ),
+        rootless_image,
+        "images/rootless-tenant/image.nix",
+        ("workloadUid = 901;", "chpst -u", '"/usr/local/bin/mvm-rootless-probe"'),
     )
+    if "1000" in rootless_image:
+        raise ContractError(
+            "images/rootless-tenant/image.nix: the rootless probe runs as the "
+            "workload identity 901, not uid 1000"
+        )
+    # Boot witnesses boot an init the image owns, never mkGuest's /init, and
+    # attach nothing built from mvm's guest runtime.
+    for path, source in (
+        ("scripts/e2e_boot.py", e2e_harness),
+        (".github/workflows/build.yml", build_workflow),
+        ("justfile", text("justfile")),
+    ):
+        leaked = [
+            token
+            for token in ("init=/init", "mvm.runtime_", "--runtime-overlay")
+            if token in source
+        ]
+        if leaked:
+            raise ContractError(f"{path} boots through mvm's guest runtime: {', '.join(leaked)}")
     require(
         build_workflow,
         ".github/workflows/build.yml",
-        ("runtime-overlay.default", "--runtime-overlay"),
+        ("--init /usr/local/bin/mvm-rootless-probe",),
     )
     for symbol in ("NAMESPACES", "CGROUPS"):
         if f'"{symbol}"' not in default_kernel:

@@ -154,7 +154,7 @@ Every change is one of these, and nothing else.
     Its separate kernel and image recipes add only workload-neutral namespace,
     cgroup, PTY and filesystem facilities. The rootfs adds `crun` and
     `fuse-overlayfs`; the direct-VMM smoke variant proves those facilities as
-    uid 1000 while proving loopback-only, vsock-mediated networking. The
+    uid 901 while proving loopback-only, vsock-mediated networking. The
     `default-tenant` recipe remains independent and is not widened by the
     rootless capability floor.
 11. **The runtime overlay stages the guest GPU shim sets.**

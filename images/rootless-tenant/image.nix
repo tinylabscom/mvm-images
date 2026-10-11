@@ -137,22 +137,60 @@
             if smoke then "mvm-rootless-microvm-smoke"
             else if sealed then "mvm-rootless-microvm"
             else "mvm-rootless-microvm-dev";
+          # The smoke variant's own PID 1. A boot witness here exercises what
+          # this repository owns — the kernel, the base root, the block, serial
+          # and vsock devices — so it boots `init=` this probe directly and
+          # never runs mkGuest's `/init` or anything from the runtime overlay.
+          #
+          # As PID 1 it mounts the pseudo filesystems, delegates the cgroup v2
+          # subtree, then re-executes itself under the workload identity the
+          # guest uses (901, mvm-worker) to witness the rootless capability
+          # floor. `chpst` is busybox's, which takes a numeric uid and needs
+          # no passwd row, so the probe does not depend on which accounts a
+          # given mkGuest names.
+          workloadUid = 901;
           rootlessProbe = ''
             #!/bin/sh
             set -eu
-            test "$(id -u)" = 1000
-            test -w /sys/fs/cgroup/mvm-workload
-            probe=/sys/fs/cgroup/mvm-workload/mvm-rootless-probe-$$
-            mkdir "$probe"
-            rmdir "$probe"
-            test ! -e /dev/net/tun
-            for dev in /sys/class/net/*; do
-              test "$(basename "$dev")" = lo
+            export PATH=/usr/local/bin:/bin:/sbin:/usr/bin:/usr/sbin
+
+            if [ "''${1:-}" = unprivileged ]; then
+              test "$(id -u)" = ${toString workloadUid}
+              test "$(id -g)" = ${toString workloadUid}
+              test -w /sys/fs/cgroup/mvm-workload
+              probe=/sys/fs/cgroup/mvm-workload/mvm-rootless-probe-$$
+              mkdir "$probe"
+              rmdir "$probe"
+              test ! -e /dev/net/tun
+              for dev in /sys/class/net/*; do
+                test "$(basename "$dev")" = lo
+              done
+              unshare -Urmpf /bin/true
+              # Both print version chatter to stderr; fuse-overlayfs also
+              # complains that fusermount3 is absent. Only the status counts.
+              crun --version >/dev/null 2>&1
+              fuse-overlayfs --version >/dev/null 2>&1
+              exit 0
+            fi
+
+            test "$$" = 1
+            mount -t proc proc /proc
+            mount -t sysfs sysfs /sys
+            # DEVTMPFS_MOUNT has normally mounted /dev already.
+            [ -e /dev/null ] || mount -t devtmpfs devtmpfs /dev
+            mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp
+            mount -t cgroup2 cgroup2 /sys/fs/cgroup
+            for ctrl in cpu memory pids cpuset io; do
+              echo "+$ctrl" > /sys/fs/cgroup/cgroup.subtree_control
             done
-            unshare -Urmpf /bin/true
-            crun --version >/dev/null
-            fuse-overlayfs --version >/dev/null
-            echo MVM-ROOTLESS-READY
+            mkdir /sys/fs/cgroup/mvm-workload
+            chown -R ${toString workloadUid}:${toString workloadUid} /sys/fs/cgroup/mvm-workload
+
+            if chpst -u ${toString workloadUid}:${toString workloadUid} "$0" unprivileged; then
+              echo MVM-ROOTLESS-READY
+            else
+              echo "MVM-ROOTLESS-FAILED: unprivileged probe exited $?"
+            fi
             exec sleep infinity
           '';
           rootfsPkg = lib.mkGuest {
@@ -160,12 +198,7 @@
             # command form → sealed/prod; shell form → dev/accessible.
             entrypoint =
               if sealed
-              then {
-                command =
-                  if smoke
-                  then [ "/usr/local/bin/mvm-rootless-probe" ]
-                  else [ "/bin/sleep" "infinity" ];
-              }
+              then { command = [ "/bin/sleep" "infinity" ]; }
               else { shell = "/bin/sh"; };
             # mkGuest supplies its own static busybox and pre-installs its
             # applet links. Re-adding the dynamic package here would pull the
@@ -174,21 +207,12 @@
               pkgs.crun
               pkgs.fuse-overlayfs
             ];
+            # The smoke variant adds only its probe, booted as PID 1 by the
+            # direct-VMM witness (scripts/e2e_boot.py --init).
             extraFiles = nixpkgs.lib.optionalAttrs smoke {
               "/usr/local/bin/mvm-rootless-probe" = {
                 content = rootlessProbe;
                 mode = "0555";
-              };
-              # The lean rootfs has no free blocks at boot. These sentinels
-              # make the init-created mountpoints exist without resizing the
-              # image; the runtime still mounts its data over them.
-              "/mnt/config/.mvm-rootless-smoke" = {
-                content = "";
-                mode = "0444";
-              };
-              "/mnt/secrets/.mvm-rootless-smoke" = {
-                content = "";
-                mode = "0444";
               };
             };
             # mkGuest's `kernel` arg supplies the in-rootfs module tree; the

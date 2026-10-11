@@ -3,6 +3,11 @@
 
 No mvm process, CLI, library or sibling checkout participates. The VMM device
 list is explicit and contains block, serial and vsock only.
+
+The guest boots `init=` a program the smoke image itself owns. The harness
+never boots mkGuest's shell `/init`, attaches a runtime overlay, or passes an
+`mvm.*` kernel parameter: the guest runtime is mvm's test surface, and a boot
+witness here covers the kernel, the base root and the devices.
 """
 
 from __future__ import annotations
@@ -21,6 +26,10 @@ from typing import Any
 
 
 READY_MARKER = "QEMU-WASM-SMOKE-READY"
+# The qemu-wasm smoke image's own busybox init.
+DEFAULT_INIT = "/bin/init"
+# mkGuest's shell init, which no boot witness here may depend on.
+FORBIDDEN_INIT = "/init"
 FORBIDDEN_PLAN_TOKENS = (
     "virtio-net",
     "e1000",
@@ -38,6 +47,16 @@ FORBIDDEN_PLAN_TOKENS = (
 
 class E2EError(RuntimeError):
     pass
+
+
+def _init_arg(init: str) -> str:
+    if not init.startswith("/") or any(c.isspace() for c in init):
+        raise E2EError(f"init must be an absolute path without whitespace: {init!r}")
+    if init == FORBIDDEN_INIT:
+        raise E2EError(
+            "/init is mkGuest's shell init; boot an init the smoke image owns"
+        )
+    return f"init={init}"
 
 
 def host_supports_vhost_vsock() -> bool:
@@ -68,18 +87,13 @@ def qemu_command(
     guest_cid: int,
     accel: str = "kvm",
     rootfs_type: str = "ext2",
-    runtime_overlay: Path | None = None,
+    init: str = DEFAULT_INIT,
 ) -> list[str]:
     if accel not in ("kvm", "tcg"):
         raise E2EError(f"unsupported QEMU accelerator: {accel}")
-    runtime_cmdline = (
-        " mvm.runtime_data=/dev/vdb mvm.runtime_source_policy=required_overlay"
-        if runtime_overlay is not None
-        else ""
-    )
     cmdline = (
         f"console=ttyS0 root=/dev/vda rw rootfstype={rootfs_type} rootwait "
-        f"panic=1 init=/init loglevel=4{runtime_cmdline}"
+        f"panic=1 {_init_arg(init)} loglevel=4"
     )
     command = [
         binary,
@@ -107,15 +121,6 @@ def qemu_command(
         "-device",
         "virtio-blk-pci,drive=rootfs",
     ]
-    if runtime_overlay is not None:
-        command.extend(
-            [
-                "-drive",
-                f"id=runtime,file={runtime_overlay},format=raw,if=none,readonly=on",
-                "-device",
-                "virtio-blk-pci,drive=runtime",
-            ]
-        )
     # Attach vhost-vsock only when the host exposes a usable /dev/vhost-vsock.
     # On GitHub-hosted runners this node is often absent or inaccessible; in that
     # case omit the device so the guest can still boot under TCG and emit the
@@ -139,16 +144,11 @@ def firecracker_config(
     vsock_path: Path,
     guest_cid: int,
     rootfs_type: str = "ext2",
-    runtime_overlay: Path | None = None,
+    init: str = DEFAULT_INIT,
 ) -> dict[str, Any]:
-    runtime_cmdline = (
-        " mvm.runtime_data=/dev/vdb mvm.runtime_source_policy=required_overlay"
-        if runtime_overlay is not None
-        else ""
-    )
     cmdline = (
         f"console=ttyS0 root=/dev/vda rw rootfstype={rootfs_type} rootwait "
-        f"panic=1 init=/init loglevel=4 reboot=k pci=off{runtime_cmdline}"
+        f"panic=1 {_init_arg(init)} loglevel=4 reboot=k pci=off"
     )
     config: dict[str, Any] = {
         "boot-source": {
@@ -169,15 +169,6 @@ def firecracker_config(
             "uds_path": str(vsock_path),
         },
     }
-    if runtime_overlay is not None:
-        config["drives"].append(
-            {
-                "drive_id": "runtime",
-                "path_on_host": str(runtime_overlay),
-                "is_root_device": False,
-                "is_read_only": True,
-            }
-        )
     assert_no_network_devices(config)
     return config
 
@@ -289,7 +280,7 @@ def _plan(args: argparse.Namespace) -> Any:
             guest_cid=args.guest_cid,
             accel=args.accel,
             rootfs_type=args.rootfs_type,
-            runtime_overlay=args.runtime_overlay,
+            init=args.init,
         )
     return firecracker_config(
         kernel=kernel,
@@ -297,7 +288,7 @@ def _plan(args: argparse.Namespace) -> Any:
         vsock_path=Path("/tmp/mvm-images-e2e.vsock"),
         guest_cid=args.guest_cid,
         rootfs_type=args.rootfs_type,
-        runtime_overlay=args.runtime_overlay,
+        init=args.init,
     )
 
 
@@ -314,9 +305,9 @@ def main() -> int:
     parser.add_argument("--rootfs-type", choices=("ext2", "ext4"), default="ext2")
     parser.add_argument("--rootfs-name", default="rootfs.bin")
     parser.add_argument(
-        "--runtime-overlay",
-        type=Path,
-        help="read-only runtime overlay attached as the second block device",
+        "--init",
+        default=DEFAULT_INIT,
+        help="absolute path of the guest init the smoke image owns",
     )
     parser.add_argument("--ready-marker", default=READY_MARKER)
     parser.add_argument(
@@ -336,11 +327,6 @@ def main() -> int:
         kernel_name = "kernel.img" if args.backend == "qemu" else "vmlinux"
         kernel = _require_file(args.artifacts / kernel_name, "kernel")
         rootfs = _require_file(args.artifacts / args.rootfs_name, "rootfs")
-        runtime_overlay = (
-            _require_file(args.runtime_overlay, "runtime overlay")
-            if args.runtime_overlay is not None
-            else None
-        )
         with tempfile.TemporaryDirectory(prefix="mvm-images-e2e-") as temp:
             temp_path = Path(temp)
             writable_rootfs = temp_path / "rootfs.bin"
@@ -355,7 +341,7 @@ def main() -> int:
                     guest_cid=args.guest_cid,
                     accel=args.accel,
                     rootfs_type=args.rootfs_type,
-                    runtime_overlay=runtime_overlay,
+                    init=args.init,
                 )
                 run_until_ready(command, args.timeout, args.ready_marker)
                 executed_plan: Any = command
@@ -367,7 +353,7 @@ def main() -> int:
                     vsock_path=temp_path / "vsock.sock",
                     guest_cid=args.guest_cid,
                     rootfs_type=args.rootfs_type,
-                    runtime_overlay=runtime_overlay,
+                    init=args.init,
                 )
                 config_path = temp_path / "config.json"
                 config_path.write_text(json.dumps(config), encoding="utf-8")
