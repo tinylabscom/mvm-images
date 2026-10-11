@@ -15,10 +15,18 @@ diverged from mvm can be told apart from one that was changed on purpose.
 
 ## The pin
 
-The pin is mvm `514720745cf5cc6dd2f295c7419132ddaa80be2d` (main after
+The pin is mvm `7ea636e43017d559576972c46256c02edfc73ded` (main after
+tinylabscom/mvm#4322). Over the previous pin it brings mkGuest's fixed guest
+identity set from tinylabscom/mvm#4300 — every root names root 0,
+`mvm-worker` 901, `mvm-dns` 987, `mvm-crng` 988 and `mvm-egress` 989, and the
+agent defaults to 901 instead of 990 — so the builder image now names the uid
+`mvm-host-vm-init` drops its guest agent to (901) after #4322; plus
+tinylabscom/mvm#4305's seccomp tier in every workload process and the runtime
+overlay's own `mvm-setpriv` copy. Before that it stood at
+`514720745cf5cc6dd2f295c7419132ddaa80be2d` (main after
 tinylabscom/mvm#4264, which puts `mvm-setpriv` in the builder boot payload and
 gives `mkGuest` its `withSetpriv` switch; the builder image needs both to
-declare builder boot ABI 2). It stood at
+declare builder boot ABI 2), and before that at
 `4e65b221744885e536ec91a3f2948cdc508dcb49` (post-v0.22.0 main) before that,
 the first pin advanced past mvm's W8 deletion of its in-tree image tree
 (tinylabscom/mvm 62e1116866): from that pin on, mvm builds no image, and the
