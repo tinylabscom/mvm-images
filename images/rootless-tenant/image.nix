@@ -166,8 +166,10 @@
                 test "$(basename "$dev")" = lo
               done
               unshare -Urmpf /bin/true
-              crun --version >/dev/null
-              fuse-overlayfs --version >/dev/null
+              # Both print version chatter to stderr; fuse-overlayfs also
+              # complains that fusermount3 is absent. Only the status counts.
+              crun --version >/dev/null 2>&1
+              fuse-overlayfs --version >/dev/null 2>&1
               exit 0
             fi
 
