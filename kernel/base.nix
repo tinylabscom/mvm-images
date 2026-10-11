@@ -158,6 +158,14 @@ let
     "PARAVIRT"
     "KVM_GUEST"
 
+    # PVH entry point. `qemu-system-x86_64 -kernel` loads an uncompressed ELF
+    # only through the PVH note (XEN_ELFNOTE_PHYS32_ENTRY) and refuses one
+    # without it, and the QEMU builder boots the builder vmlinux the same way.
+    # PVH sits under HYPERVISOR_GUEST and needs no XEN, which stays off. With
+    # the note present Firecracker's x86_64 loader also enters through it
+    # rather than the 64-bit Linux boot protocol.
+    "PVH"
+
     # libkrun on x86 has no device tree (as on aarch64) and no PCI enumeration
     # (as under QEMU): it advertises its virtio-mmio devices *only* through
     # `virtio_mmio.device=<size>@<addr>:<irq>` kernel-cmdline params. Without
