@@ -7,6 +7,7 @@ name: Reproduce
 # composition, and mvm consumes the published digest-pinned results.
 
 on:
+  workflow_call: {}
   pull_request:
     paths:
       - .github/workflows/reproduce.yml
@@ -14,9 +15,7 @@ on:
       - flake.nix
       - flake.lock
       - kernel/**
-      - images/builder-vm/**
-      - images/default-tenant/**
-      - images/rootless-tenant/**
+      - images/**
   workflow_dispatch: {}
 
 permissions:
@@ -32,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [aarch64, x86_64]
-        role: [builder-vm, default-tenant, rootless-tenant, runtime-overlay]
+        role: [builder-vm, default-tenant, rootless-tenant]
         include:
           - arch: aarch64
             runner: ubuntu-24.04-arm

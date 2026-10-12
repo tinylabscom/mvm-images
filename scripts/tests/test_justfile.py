@@ -11,16 +11,18 @@ class JustfileBuilderVmTests(unittest.TestCase):
         recipe is a plain nix build — no zig toolchain, no
         build-host-binaries.sh, no MVM_HOST_BIN_DIR, no --impure."""
         justfile = (ROOT / "justfile").read_text()
-        recipe = justfile.split("builder-vm mvm_checkout=", 1)[1].split(
+        recipe = justfile.split("builder-vm target=arch:", 1)[1].split(
             "# Build every release-bearing output", 1
         )[0]
 
         self.assertIn(
-            'nix build ".#legacyPackages.{{system}}.builder-vm.default"', recipe
+            'nix build ".#legacyPackages.{{target}}-linux.builder-vm.default"', recipe
         )
         self.assertNotIn("install-host-toolchain", recipe)
         self.assertNotIn("build-host-binaries", recipe)
         self.assertNotIn("MVM_HOST_BIN_DIR", recipe)
+        self.assertNotIn("mvm_checkout", recipe)
+        self.assertNotIn("--override-input", recipe)
         self.assertNotIn("--impure", recipe)
 
 

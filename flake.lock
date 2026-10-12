@@ -21,23 +21,6 @@
         "type": "github"
       }
     },
-    "mvm": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1791717873,
-        "narHash": "sha256-lnpvmmKuSr1JO53Emya/uV6+6S8xtyvET11DeBGwVgE=",
-        "owner": "tinylabscom",
-        "repo": "mvm",
-        "rev": "7ea636e43017d559576972c46256c02edfc73ded",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tinylabscom",
-        "repo": "mvm",
-        "rev": "7ea636e43017d559576972c46256c02edfc73ded",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1778430510,
@@ -54,28 +37,10 @@
         "type": "github"
       }
     },
-    "nixpkgs-initramfs": {
-      "locked": {
-        "lastModified": 1782847189,
-        "narHash": "sha256-twXPFqFsrrY5r28Zh7Homgcp2gUMBgQ6WDS98Q/3xFI=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "b6018f87da91d19d0ab4cf979885689b469cdd41",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-25.11",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
         "microvm": "microvm",
-        "mvm": "mvm",
-        "nixpkgs": "nixpkgs",
-        "nixpkgs-initramfs": "nixpkgs-initramfs"
+        "nixpkgs": "nixpkgs"
       }
     },
     "spectrum": {

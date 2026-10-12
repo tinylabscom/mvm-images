@@ -1,44 +1,23 @@
 {
-  description = "mvm bundled default microVM image (Plan 158) — dev + prod (verity-sealed) variants";
+  description = "Generic default tenant Linux base — dev and verity-sealed variants";
 
-  # Both variants build-validated (aarch64-linux) via
-  # nix-in-docker on the authoring host: `default`/`prod` emits
+  # `default` emits
   # {vmlinux, rootfs.ext4, rootfs.verity, rootfs.roothash,
   # rootfs-closure-paths, mvm-meta.json} with a valid 64-hex verity roothash and a
   # `sealed:true, accessible:false,
   # overlayAware:true, rootlessEntrypoint:true` sidecar; `dev` emits
   # {vmlinux, rootfs.ext4, mvm-meta.json} with `sealed:false, accessible:true`.
-  # The x86_64-linux build + the actual VM boot run in CI / on a runtime host.
-  # Inputs come from this repository's root `flake.nix`, which pins nixpkgs,
-  # microvm.nix and the exact `mvm` commit once for every image and calls
-  # `outputs` below with them. This file is not a flake on its own.
+  # Both architectures require Linux build, reproduction and boot validation.
+  # Inputs come from this repository's root flake. No guest-runtime source
+  # participates in composition; the CLI supplies PID 1 at boot.
 
   outputs =
-    { self, nixpkgs, microvm, mvm-src, ... }:
+    { self, nixpkgs, microvm, ... }:
     let
       systems = [ "aarch64-linux" "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # The `mvm` source tree at the commit the root flake pins. Everything this
-      # image reads from `mvm` resolves against it; there is no local override.
-      workspaceRoot = mvm-src.outPath;
-
-      # Filtered workspace (mirrors builder-vm/runtime-overlay) for mkGuest.
-      workspace =
-        (import (workspaceRoot + "/nix/lib/workspace-filter.nix") {
-          inherit (nixpkgs) lib;
-        })
-        { inherit workspaceRoot; };
-
-      # The `mvm` flake, evaluated against this flake's pinned inputs and the
-      # filtered workspace; mkGuest is its user-facing `lib.<system>` output.
-      mvm = (import (workspaceRoot + "/nix/flake.nix")).outputs {
-        self = { };
-        inherit nixpkgs microvm;
-        mvm-workspace = workspace;
-      };
-
-      libFor = system: mvm.lib.${system};
+      baseImageContract = import ../base-image-contract.nix;
 
       # Workload kernel — the single shared definition in this repository's
       # `kernel/`, identical to the one builder-vm builds. Consuming the shared
@@ -50,10 +29,8 @@
         import ../../kernel/workload.nix
           { inherit pkgs; base = kernelBaseFor pkgs; };
 
-      # Verity determinism — copied verbatim from runtime-overlay
-      # (nix/images/runtime-overlay/flake.nix:180-203). MUST stay in lockstep
-      # with `mvm_build::oci_to_rootfs::verity::VeritysetupOptions::default` and
-      # the guest agent's DATA_BLOCK_SIZE.
+      # Linux-layer verity format: fixed block sizes, salt and UUID make the
+      # sealed root reproducible and match the verified-boot artifact contract.
       verityDataBlockSize = 1024;
       verityHashBlockSize = 4096;
       veritySalt = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -74,12 +51,6 @@
           };
         });
 
-      # Host<->guest contract this rootfs speaks. MUST stay in lockstep with
-      # `PROTOCOL_VERSION_AUTHENTICATED` in
-      # crates/mvm-contract/src/policy/security.rs — a rootfs that claims a
-      # version it does not speak is worse than one that claims none.
-      guestProtocolVersion = 2;
-
       # Which published image line these bytes belong to. Supplied by the
       # release build; empty for a local build of a working tree, which
       # genuinely belongs to no published line. Deliberately not a constant in
@@ -87,15 +58,9 @@
       # moved past it.
       bootImageTag = builtins.getEnv "MVM_BOOT_IMAGE_TAG";
 
-      # The commit whose mk-guest.nix produced this rootfs. mk-guest.nix is
-      # `mvm`'s, so this is the `mvm` input's commit — never this repository's
-      # own revision, which would tie the rootfs bytes to unrelated commits here.
-      # A local mvm checkout passed with `--override-input mvm path:<dir>` has no
-      # revision to resolve and leaves this empty rather than inventing one,
-      # exactly as mvm's own flake does for a `path:` build.
-      generatorRev = mvm-src.rev or mvm-src.dirtyRev or "";
+      generatorRev = self.rev or self.dirtyRev or "";
 
-      # Serialize mkGuest's `passthru.mvm` into the GuestSidecar wire shape
+      # Serialize the locally composed base's metadata into the cache wire shape
       # (crates/mvm-build/src/builder_vm.rs, #[serde(rename_all="camelCase")]).
       #
       # `source` and `builtAt` describe how the bytes reached a cache, which is
@@ -105,11 +70,7 @@
       # overwritten by the fetch path, for which it is no longer true.
       sidecarJson = mvm:
         builtins.toJSON {
-          # `runtimeLean` belongs in this list for the same reason
-          # `overlayAware` does: the required-overlay admission gate reads both,
-          # and a field mkGuest sets but this serializer drops reaches the gate
-          # as its `false` default. That is how a rootfs carrying no baked agent
-          # at all came to be refused as one that might silently degrade to one.
+          # These cache flags agree: no baked agent or fallback exists.
           inherit (mvm)
             name accessible sealed entrypointKind initSystem
             expectedBootMs agentBinary rootlessEntrypoint hypervisor overlayAware
@@ -117,7 +78,7 @@
           imageTag = bootImageTag;
           source = "built-local";
           builtAt = "";
-          protocolVersion = guestProtocolVersion;
+          inherit baseImageContract;
           inherit generatorRev;
         };
 
@@ -126,7 +87,6 @@
       mkVariant = { system, sealed }:
         let
           pkgs = import nixpkgs { inherit system; };
-          lib = libFor system;
           kernelPkg = mkWorkloadKernel pkgs;
           # What the consumer's loader takes, not what the build happens to
           # leave lying around: arm64 loaders want `Image`, Firecracker's
@@ -134,28 +94,18 @@
           # the ELF beside the bzImage for exactly this.
           kernelFile = if pkgs.stdenv.hostPlatform.isAarch64 then "Image" else "vmlinux";
           imageName = if sealed then "mvm-default-microvm" else "mvm-default-microvm-dev";
-          rootfsPkg = lib.mkGuest {
+          rootfsPkg = (import ../mk-rootfs.nix { inherit pkgs; }) {
             name = imageName;
-            # command form → sealed/prod; shell form → dev/accessible.
-            entrypoint =
-              if sealed
-              then { command = [ "/bin/sleep" "infinity" ]; }
-              else { shell = "/bin/sh"; };
-            # mkGuest supplies its own static busybox and pre-installs its
-            # applet links. Re-adding the dynamic package here would pull the
-            # glibc runtime closure into the sealed tenant image.
+            inherit sealed;
+            # Only static busybox is needed in the default Linux base.
             packages = [ ];
-            # mkGuest's `kernel` arg supplies the in-rootfs module tree; the
-            # workload kernel is module-free (DM_VERITY built-in), passed for
-            # parity with a real workload image.
-            kernel = kernelPkg;
           };
           meta = rootfsPkg.passthru.mvm;
         in
         pkgs.runCommand imageName
           {
             nativeBuildInputs = [ pkgs.e2fsprogs (pinnedCryptsetupFor pkgs) pkgs.coreutils ];
-            # Expose the inner mkGuest rootfs as `passthru.rootfs` (the
+            # Expose the inner base rootfs as `passthru.rootfs` (the
             # convention builder-vm uses): the builder VM's nix-build cmd.sh
             # emits mvm-meta.json by eval'ing `<attr>.passthru.rootfs.passthru.mvm`
             # for runCommand-wrapped images (builder_vm_runtime.rs). Without
@@ -212,14 +162,7 @@
               ''
             }
 
-            # Rootfs → rootfs.ext4 (mkGuest emits a single ext4).
-            if [ -f ${rootfsPkg} ]; then
-              cp ${rootfsPkg} $out/rootfs.ext4
-            else
-              img=$(find ${rootfsPkg} -maxdepth 1 \( -name '*.img' -o -name '*.ext4' \) | head -1)
-              [ -n "$img" ] || { echo "mkGuest output ${rootfsPkg} has no .img/.ext4" >&2; ls -la ${rootfsPkg} >&2; exit 1; }
-              cp "$img" $out/rootfs.ext4
-            fi
+            cp ${rootfsPkg} $out/rootfs.ext4
 
             # Preserve the exact registered runtime closure as a release
             # provenance artifact. The footprint ledger validates every line
@@ -240,7 +183,7 @@
           ''
           + nixpkgs.lib.optionalString sealed ''
 
-            # dm-verity seal (prod only) — runtime-overlay recipe verbatim.
+            # dm-verity seal (prod only) in the Linux-layer artifact format.
             touch $out/rootfs.verity
             veritysetup_out=$(
               veritysetup format \

@@ -42,9 +42,6 @@ class Member:
     # Which build of the role this member carries; None is the production
     # build. Only the workload bases publish a dev variant.
     build_mode: str | None = None
-    # Fingerprint of the sources the member was built from (today only the
-    # SDK sidecar publishes one); None omits the field.
-    source_fingerprint: str | None = None
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -63,65 +60,7 @@ def compact_json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-# The exact input list of mvm's `sdk_cdylib_source_fingerprint`
-# (crates/mvm-build/src/guest_agent_build.rs). The consumer recomputes the
-# fingerprint with that Rust function on its own tree; this port exists so
-# the producer can publish it without a Rust toolchain. A drift between the
-# two is caught by the known-answer test in scripts/tests/: the consumer
-# then sees a mismatch and pair-builds, which is the safe direction, but
-# the test exists so the port never silently diverges.
-SDK_CDYLIB_INPUTS = (
-    "Cargo.lock",
-    "Cargo.toml",
-    "crates/mvm-contract/Cargo.toml",
-    "crates/mvm-contract/src",
-    "crates/mvm-core/Cargo.toml",
-    "crates/mvm-core/src",
-    "crates/mvm-agentd/Cargo.toml",
-    "crates/mvm-agentd/src",
-    "crates/mvm-host-services/Cargo.toml",
-    "crates/mvm-host-services/src",
-    "crates/mvm-setpriv/Cargo.toml",
-    "crates/mvm-setpriv/src",
-)
-SDK_CDYLIB_DOMAIN = b"mvm-host-services-cdylib-input-v1\0"
-
-
-def _hash_file_into(hasher: "hashlib._Hash", rel: str, path: Path) -> None:
-    data = path.read_bytes()
-    hasher.update(rel.encode())
-    hasher.update(b"\0")
-    hasher.update(len(data).to_bytes(8, "little"))
-    hasher.update(b"\0")
-    hasher.update(data)
-    hasher.update(b"\0")
-
-
-def _hash_dir_into(hasher: "hashlib._Hash", prefix: str, directory: Path) -> None:
-    for entry in sorted(directory.iterdir(), key=lambda e: e.name):
-        rel = f"{prefix}/{entry.name}"
-        if entry.is_dir():
-            _hash_dir_into(hasher, rel, entry)
-        elif entry.is_file():
-            _hash_file_into(hasher, rel, entry)
-
-
-def sdk_cdylib_fingerprint(mvm_source: Path) -> str:
-    """The producer half of mvm's `sdk_cdylib_source_fingerprint`."""
-    hasher = hashlib.sha256()
-    hasher.update(SDK_CDYLIB_DOMAIN)
-    for rel in SDK_CDYLIB_INPUTS:
-        path = mvm_source / rel
-        if path.is_dir():
-            _hash_dir_into(hasher, rel, path)
-        elif path.is_file():
-            _hash_file_into(hasher, rel, path)
-        else:
-            raise Refusal(f"fingerprint input missing from mvm source: {rel}")
-    return hasher.hexdigest()
-
-
-def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
+def member_specs() -> tuple[Member, ...]:
     members: list[Member] = []
     for arch in ARCHES:
         kernel = {"kernel": "elf" if arch == "x86_64" else "image"}
@@ -211,32 +150,6 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
                     build_mode="dev",
                 ),
                 Member(
-                    f"runtime-overlay-{arch}",
-                    "runtime_overlay",
-                    target,
-                    (Artifact(f"runtime-overlay-{arch}.tar.gz", "tar_gz"),),
-                ),
-                Member(
-                    f"sdk-sidecar-{arch}-glibc",
-                    {"sdk_sidecar": "glibc"},
-                    target,
-                    (Artifact(f"sdk-sidecar-{arch}-glibc.tar.gz", "tar_gz"),),
-                    source_fingerprint=sdk_fingerprint,
-                ),
-                Member(
-                    f"sdk-sidecar-{arch}-musl",
-                    {"sdk_sidecar": "musl"},
-                    target,
-                    (Artifact(f"sdk-sidecar-{arch}-musl.tar.gz", "tar_gz"),),
-                    source_fingerprint=sdk_fingerprint,
-                ),
-                Member(
-                    f"initramfs-{arch}",
-                    "initramfs",
-                    target,
-                    (Artifact(f"initramfs-{arch}.tar.gz", "tar_gz"),),
-                ),
-                Member(
                     f"stage0-bootstrap-kernel-{arch}",
                     "stage0_bootstrap_kernel",
                     target,
@@ -257,28 +170,13 @@ def member_specs(sdk_fingerprint: str) -> tuple[Member, ...]:
     return tuple(members)
 
 
-def parse_protocols(mvm_source: Path) -> tuple[int, int]:
-    agent = (mvm_source / "crates/mvm-agentd/src/vsock/mod.rs").read_text()
-
-    def one(source: str, pattern: str, what: str) -> int:
-        matches = re.findall(pattern, source, re.MULTILINE)
-        if len(matches) != 1:
-            raise Refusal(f"expected exactly one {what} constant, found {len(matches)}")
-        return int(matches[0])
-
-    low = one(
-        agent,
-        r"^pub const MIN_SUPPORTED_PROTOCOL_VERSION: u32 = (\d+);$",
-        "minimum guest-agent protocol",
-    )
-    high = one(
-        agent,
-        r"^pub const PROTOCOL_VERSION: u32 = (\d+);$",
-        "current guest-agent protocol",
-    )
-    if low < 1 or low > high:
-        raise Refusal(f"invalid guest-agent protocol range {low}..={high}")
-    return low, high
+def base_image_contract(images_root: Path) -> int:
+    """Read the locally owned contract also baked into every base root."""
+    path = images_root / "images" / "base-image-contract.nix"
+    body = path.read_text().strip()
+    if body != "1":
+        raise Refusal(f"unsupported base-image contract in {path}: {body!r}")
+    return int(body)
 
 
 def builder_cache_contract(images_root: Path) -> int:
@@ -307,17 +205,6 @@ def builder_boot_abi(images_root: Path) -> int:
             f"{path} must hold exactly one bare integer, found {len(values)}"
         )
     return int(values[0])
-
-
-def pinned_mvm_commit(lock_path: Path) -> str:
-    lock = json.loads(lock_path.read_text())
-    try:
-        revision = lock["nodes"]["mvm"]["locked"]["rev"]
-    except (KeyError, TypeError) as error:
-        raise Refusal(f"{lock_path}: no locked mvm revision") from error
-    if not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise Refusal(f"{lock_path}: mvm revision is not a full commit")
-    return revision
 
 
 def require_file(path: Path) -> None:
@@ -473,8 +360,8 @@ def assemble(args: argparse.Namespace) -> None:
     if not assets.is_dir():
         raise Refusal(f"artifact directory does not exist: {assets}")
     subjects_path = args.subjects.resolve()
-    # Everything in the artifact directory is uploaded to the release, so a
-    # subjects file written there would publish an unattested file.
+    # Keep the attestation input outside the payload directory. Publication
+    # derives its asset allowlist from this file, never from diagnostic outputs.
     if assets in subjects_path.parents:
         raise Refusal(f"provenance subjects must be written outside {assets}")
     if not subjects_path.parent.is_dir():
@@ -491,7 +378,7 @@ def assemble(args: argparse.Namespace) -> None:
         raise Refusal("issued-at must include a timezone")
 
     ensure_stage0_aliases(assets)
-    members = member_specs(sdk_cdylib_fingerprint(args.mvm_source.resolve()))
+    members = member_specs()
     for member in members:
         for artifact in member.artifacts:
             require_file(assets / artifact.name)
@@ -499,8 +386,6 @@ def assemble(args: argparse.Namespace) -> None:
     flake_lock = args.flake_lock.resolve()
     require_file(flake_lock)
     flake_hash = sha256_file(flake_lock)
-    mvm_commit = pinned_mvm_commit(flake_lock)
-    low, high = parse_protocols(args.mvm_source.resolve())
     cache = builder_cache_contract(IMAGES_ROOT)
     boot_abi = builder_boot_abi(Path(__file__).resolve().parent.parent)
     release_url = f"https://github.com/{REPOSITORY}/releases/download/{args.tag}"
@@ -524,8 +409,6 @@ def assemble(args: argparse.Namespace) -> None:
         }
         if member.build_mode is not None:
             rendered["build_mode"] = member.build_mode
-        if member.source_fingerprint is not None:
-            rendered["source_fingerprint"] = member.source_fingerprint
         if member.bootable:
             rendered["boot_protocol"] = "linux_direct"
         rendered.update(
@@ -554,7 +437,7 @@ def assemble(args: argparse.Namespace) -> None:
         subjects.append((sbom_name, sbom_hash))
 
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "set_version": args.tag.removeprefix("image-set/v"),
         "issued_at": args.issued_at,
         "producer": {
@@ -563,9 +446,8 @@ def assemble(args: argparse.Namespace) -> None:
             "release_tag": args.tag,
             "source_commit": args.source_commit,
         },
-        "mvm_source_commit": mvm_commit,
         "compatibility": {
-            "guest_agent_protocol": {"min": low, "max": high},
+            "base_image_contract": base_image_contract(IMAGES_ROOT),
             "builder_cache_contract": cache,
             "builder_boot_abi": boot_abi,
         },
@@ -610,7 +492,6 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--tag", required=True)
     result.add_argument("--source-commit", required=True)
     result.add_argument("--issued-at", required=True)
-    result.add_argument("--mvm-source", type=Path, required=True)
     result.add_argument("--flake-lock", type=Path, default=Path("flake.lock"))
     result.add_argument(
         "--subjects",

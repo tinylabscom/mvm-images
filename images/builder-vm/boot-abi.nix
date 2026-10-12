@@ -6,8 +6,8 @@
 #     builds, plus the `mvm-setpriv` privilege-drop helper compiled from the
 #     pinned mvm source.
 # 2 — `mvm-setpriv` travels in that payload too, so the image carries no mvm
-#     binary at all. mkGuest is called with `withSetpriv = false`, and the
-#     guest runs every mvm binary from /run/mvm/host-bins.
+#     binary at all. The local Linux-layer composer has no guest-runtime
+#     input; the guest runs every mvm binary from /run/mvm/host-bins.
 #
 # One value, read by everything that has to agree on it: the image itself
 # (which writes /etc/mvm/builder-boot-abi), `scripts/assemble-release.py` and
