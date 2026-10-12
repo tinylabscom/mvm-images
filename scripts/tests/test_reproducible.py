@@ -6,6 +6,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CanonicalReproducibilityTests(unittest.TestCase):
+    def test_reproduction_is_callable_for_release_tags(self):
+        workflow = (ROOT / ".github/workflows/reproduce.yml").read_text()
+        self.assertIn("  workflow_call: {}", workflow)
+        self.assertIn("arch: [aarch64, x86_64]", workflow)
+        self.assertIn("role: [builder-vm, default-tenant, rootless-tenant]", workflow)
+
     def test_rebuilds_every_canonical_base_role(self):
         script = (ROOT / "scripts/check-reproducible.sh").read_text()
         workflow = (ROOT / ".github/workflows/reproduce.yml").read_text()

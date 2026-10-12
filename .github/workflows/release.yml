@@ -1,8 +1,8 @@
 name: Release image set
 
 # A release tag is a request to build a candidate, not permission to publish a
-# partial result. The reusable build workflow must finish every architecture
-# and role before this job can enter the protected image-release environment.
+# partial result. Build and byte-for-byte reproduction must finish every
+# architecture and base role before entering the protected image-release environment.
 # Assembly then refuses missing bytes, and an authenticated released verifier independently
 # checks the signed manifest, current-train completeness, lock and artifact
 # digests before `gh release create` is allowed to run. Only a verified set is
@@ -25,8 +25,13 @@ jobs:
     permissions:
       contents: read
 
+  reproduce:
+    uses: ./.github/workflows/reproduce.yml
+    permissions:
+      contents: read
+
   publish:
-    needs: build
+    needs: [build, reproduce]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: image-release

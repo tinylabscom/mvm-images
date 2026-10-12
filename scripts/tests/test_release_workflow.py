@@ -87,6 +87,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def position(self, prefix: str) -> int:
         return self.steps.index(self.step_named(prefix))
 
+    def test_publication_requires_build_and_reproduction_success(self):
+        reproduce = block(self.jobs, "reproduce:", 2)
+        self.assertEqual(
+            mapping(reproduce, 4)["uses"], "./.github/workflows/reproduce.yml"
+        )
+        self.assertEqual(
+            mapping(block(reproduce, "permissions:", 4), 6), {"contents": "read"}
+        )
+        publish = mapping(self.publish, 4)
+        self.assertEqual(publish["needs"], "[build, reproduce]")
+        self.assertNotIn("if", publish, "publication must retain the default success gate")
+        self.assertNotIn("if", mapping(reproduce, 4))
+        self.assertNotIn("continue-on-error", mapping(reproduce, 4))
+
     def test_attestation_permissions_belong_to_the_publish_job_only(self):
         self.assertEqual(mapping(block(self.lines, "permissions:", 0), 2), {"contents": "read"})
         self.assertEqual(
