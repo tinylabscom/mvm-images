@@ -211,12 +211,13 @@ version="$MVM_INSTALL_LIB_DIR/test"
 mkdir -p "$version/guest-runtime" "$MVM_INSTALL_DIR"
 printf '%s' 'unit CLI fixture' > "$version/mvmctl"
 for suffix in "" .sha256 .bundle .sha256.bundle; do
-  cp "../../{runtime}$suffix" "$version/guest-runtime/{runtime}$suffix"
+  cp "{runtime}$suffix" "$version/guest-runtime/{runtime}$suffix"
 done
 ln -s "$version/mvmctl" "$MVM_INSTALL_DIR/mvmctl"
 """.encode()
+                (out / "install.sh").write_bytes(installer)
                 with tarfile.open(out / cli, "w:gz") as archive:
-                    for name, data in (("install.sh", installer), ("mvmctl", b"unit CLI fixture")):
+                    for name, data in (("mvmctl", b"unit CLI fixture"),):
                         member = tarfile.TarInfo(f"{top}/{name}")
                         member.size = len(data)
                         archive.addfile(member, io.BytesIO(data))
@@ -229,6 +230,43 @@ ln -s "$version/mvmctl" "$MVM_INSTALL_DIR/mvmctl"
                 self.assertTrue((out / "mvmctl").is_file())
             finally:
                 os.chdir(previous)
+
+    def test_the_installer_is_read_at_the_pinned_release_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            def fake_command(*args, output=None):
+                calls.append(args)
+                output.write(b"#!/bin/sh\n")
+                return b""
+
+            with mock.patch.object(GATE, "command", side_effect=fake_command):
+                path = GATE.fetch_installer(COMMIT, Path(tmp))
+            self.assertEqual(path, Path(tmp) / "install.sh")
+            self.assertEqual(len(calls), 1)
+            self.assertIn(f"repos/{GATE.REPOSITORY}/contents/install.sh?ref={COMMIT}", calls[0])
+            self.assertIn("Accept: application/vnd.github.raw", calls[0])
+
+    def test_an_empty_installer_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(GATE, "command", return_value=b""):
+            with self.assertRaisesRegex(GATE.Refusal, "empty release installer"):
+                GATE.fetch_installer(COMMIT, Path(tmp))
+
+    def test_a_missing_installer_is_refused_before_executing_anything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = SimpleNamespace(tag=TAG, out=Path(tmp))
+            cli = "mvmctl-x86_64-unknown-linux-gnu.tar.gz"
+            with tarfile.open(args.out / cli, "w:gz") as stream:
+                member = tarfile.TarInfo("mvmctl-x86_64-unknown-linux-gnu/mvmctl")
+                member.size = 1
+                stream.addfile(member, io.BytesIO(b"x"))
+            with mock.patch.object(GATE.sys, "platform", "linux"), \
+                 mock.patch.object(GATE.os, "uname", return_value=SimpleNamespace(machine="x86_64")), \
+                 mock.patch.object(GATE.subprocess, "run") as execute:
+                with self.assertRaisesRegex(GATE.Refusal, "lacks installer"):
+                    GATE.install(args, {cli: "b" * 64})
+                execute.assert_not_called()
 
     def test_unsafe_archive_is_refused_before_executing_installer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -251,9 +289,9 @@ ln -s "$version/mvmctl" "$MVM_INSTALL_DIR/mvmctl"
                 args = SimpleNamespace(tag=TAG, commit=COMMIT, run_id=RUN, out=Path(tmp))
                 cli = "mvmctl-x86_64-unknown-linux-gnu.tar.gz"
                 top = cli.removesuffix(".tar.gz")
+                (args.out / "install.sh").write_bytes(b"# unit fixture, never executed\n")
                 with tarfile.open(args.out / cli, "w:gz") as stream:
-                    for name, data in (("install.sh", b"# unit fixture, never executed\n"),
-                                       ("mvmctl", b"unit CLI fixture")):
+                    for name, data in (("mvmctl", b"unit CLI fixture"),):
                         member = tarfile.TarInfo(f"{top}/{name}")
                         member.size = len(data)
                         stream.addfile(member, io.BytesIO(data))
