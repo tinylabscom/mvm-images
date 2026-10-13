@@ -247,11 +247,12 @@ def verify(args):
     verify_blob(proof, proof_bundle, args.tag)
     require(checksum_table(proof.read_text()).get(runtime_name) == digests[runtime_name],
             "published runtime checksum proof disagrees")
+    fetch_installer(args.commit, args.out)
     install(args, digests)
 
 
 def installer_environment(args, cli_digest):
-    # The authenticated release installer is the only installation rule.
+    # The pinned release commit's installer is the only installation rule.
     # Inherited download/verifier/skip overrides must not weaken that rule.
     env = {key: value for key, value in os.environ.items()
            if not key.startswith("MVM_") and key not in ("GH_HOST", "GITHUB_API_URL",
@@ -263,8 +264,27 @@ def installer_environment(args, cli_digest):
     return env
 
 
+INSTALLER = "install.sh"
+
+
+def fetch_installer(commit, directory):
+    """Fetch the installer the pinned release commit publishes.
+
+    The CLI archive carries no installer; users run the repository's
+    `install.sh`. Reading it at the commit the release tag was just resolved to
+    makes it exactly the installer of that release.
+    """
+    path = directory / INSTALLER
+    with path.open("xb") as stream:
+        command("gh", "api", "--hostname", "github.com",
+                "-H", "Accept: application/vnd.github.raw",
+                f"repos/{REPOSITORY}/contents/{INSTALLER}?ref={commit}", output=stream)
+    require(path.stat().st_size > 0, "empty release installer")
+    return path
+
+
 def install(args, digests):
-    """Run the authenticated shipped installer, then verify what it installed."""
+    """Run the release commit's installer, then verify what it installed."""
     require(sys.platform == "linux" and os.uname().machine == "x86_64",
             "candidate verifier installation requires the configured Linux x86_64 runner")
     cli_name = "mvmctl-x86_64-unknown-linux-gnu.tar.gz"
@@ -280,7 +300,7 @@ def install(args, digests):
                     and path.as_posix() not in names, "unsafe or duplicate CLI archive member")
             names.add(path.as_posix())
         archive.extractall(unpacked, members=members, filter="data")
-    installer = unpacked / top / "install.sh"
+    installer = args.out.resolve() / INSTALLER
     expected_binary = unpacked / top / "mvmctl"
     require(installer.is_file() and expected_binary.is_file(), "release lacks installer or CLI")
     result = subprocess.run(["sh", str(installer)], cwd=installer.parent,
