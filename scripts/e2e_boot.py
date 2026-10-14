@@ -88,12 +88,23 @@ def qemu_command(
     accel: str = "kvm",
     rootfs_type: str = "ext2",
     init: str = DEFAULT_INIT,
+    arch: str = "x86_64",
+    initrd: Path | None = None,
+    read_only: bool = False,
+    require_vsock: bool = False,
 ) -> list[str]:
     if accel not in ("kvm", "tcg"):
         raise E2EError(f"unsupported QEMU accelerator: {accel}")
+    if arch not in ("x86_64", "aarch64"):
+        raise E2EError(f"unsupported architecture: {arch}")
+    console = "ttyS0" if arch == "x86_64" else "ttyAMA0"
+    init_arg = _init_arg(init)
+    if initrd is not None:
+        init_arg = "rd" + init_arg
     cmdline = (
-        f"console=ttyS0 root=/dev/vda rw rootfstype={rootfs_type} rootwait "
-        f"panic=1 {_init_arg(init)} loglevel=4"
+        f"console={console} root=/dev/vda {'ro' if read_only else 'rw'} "
+        f"rootfstype={rootfs_type} rootwait "
+        f"panic=1 {init_arg} loglevel=4"
     )
     command = [
         binary,
@@ -107,7 +118,7 @@ def qemu_command(
         "-serial",
         "stdio",
         "-machine",
-        f"q35,accel={accel}",
+        f"{'q35' if arch == 'x86_64' else 'virt'},accel={accel}",
         "-cpu",
         "host" if accel == "kvm" else "max",
         "-m",
@@ -117,10 +128,12 @@ def qemu_command(
         "-append",
         cmdline,
         "-drive",
-        f"id=rootfs,file={rootfs},format=raw,if=none,readonly=off",
+        f"id=rootfs,file={rootfs},format=raw,if=none,readonly={'on' if read_only else 'off'}",
         "-device",
         "virtio-blk-pci,drive=rootfs",
     ]
+    if initrd is not None:
+        command.extend(["-initrd", str(initrd)])
     # Attach vhost-vsock only when the host exposes a usable /dev/vhost-vsock.
     # On GitHub-hosted runners this node is often absent or inaccessible; in that
     # case omit the device so the guest can still boot under TCG and emit the
@@ -128,6 +141,8 @@ def qemu_command(
     if host_supports_vhost_vsock():
         command.extend(["-device", f"vhost-vsock-pci,guest-cid={guest_cid}"])
     else:
+        if require_vsock:
+            raise E2EError("contract boot requires usable /dev/vhost-vsock")
         print(
             "warning: /dev/vhost-vsock not available or not accessible; running without vhost-vsock",
             file=sys.stderr,
@@ -224,49 +239,87 @@ def _require_binary(binary: str) -> str:
     return found
 
 
-def run_until_ready(command: list[str], timeout: float, ready_marker: str) -> None:
+def run_until_ready(
+    command: list[str], timeout: float, ready_marker: str, *,
+    exact_marker: bool = False, refusal_marker: str | None = None,
+) -> None:
     assert_no_network_devices(command)
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
+        bufsize=0,
     )
     assert process.stdout is not None
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout
     captured: list[str] = []
+    pending = b""
+    output_closed = False
     try:
+        os.set_blocking(process.stdout.fileno(), False)
+        selector.register(process.stdout, selectors.EVENT_READ)
         while time.monotonic() < deadline:
-            for key, _ in selector.select(timeout=0.25):
-                line = key.fileobj.readline()
-                if not line:
-                    continue
+            wait = min(0.25, max(0, deadline - time.monotonic()))
+            if output_closed:
+                time.sleep(wait)
+            else:
+                selector.select(timeout=wait)
+            # One bounded raw read per turn: no text-wrapper prefetch and no
+            # blocking on a missing newline. Drain queued bytes even after exit.
+            try:
+                chunk = os.read(process.stdout.fileno(), 65536)
+            except BlockingIOError:
+                chunk = None
+            status = process.poll()
+            finished = chunk == b"" or (chunk is None and status is not None)
+            if chunk:
+                pending += chunk
+            lines = pending.split(b"\n")
+            pending = lines.pop()
+            lines = [line + b"\n" for line in lines]
+            # A final unterminated line counts at EOF, but never while the
+            # child is alive: an exact marker must be a whole serial line.
+            if finished and pending:
+                lines.append(pending)
+                pending = b""
+            for raw_line in lines:
+                line = raw_line.decode("utf-8", errors="replace")
                 sys.stdout.write(line)
                 sys.stdout.flush()
                 captured.append(line)
-                if ready_marker in line:
+                if refusal_marker is not None and refusal_marker in line:
+                    raise E2EError(f"guest refused contract: {line.strip()}")
+                if (line.rstrip("\r\n") == ready_marker if exact_marker else ready_marker in line):
                     return
-            status = process.poll()
-            if status is not None:
+            if finished and status is not None:
                 raise E2EError(
                     f"VMM exited {status} before {ready_marker!r}\n"
                     + "".join(captured[-80:])
                 )
+            if finished and not output_closed:
+                selector.unregister(process.stdout)
+                output_closed = True
+        partial = pending.decode("utf-8", errors="replace")
+        sys.stdout.write(partial)
+        sys.stdout.flush()
         raise E2EError(
             f"timed out after {timeout:.0f}s waiting for {ready_marker!r}\n"
             + "".join(captured[-80:])
+            + partial
         )
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+        try:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        finally:
+            selector.close()
+            process.stdout.close()
 
 
 def _plan(args: argparse.Namespace) -> Any:

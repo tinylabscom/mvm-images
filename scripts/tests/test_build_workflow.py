@@ -44,6 +44,25 @@ class BuildWorkflowTests(unittest.TestCase):
         self.assertIn("--init /usr/local/bin/mvm-rootless-probe", self.build)
         self.assertNotIn("mvmctl", self.build)
 
+    def test_native_contract_boots_are_required_and_probe_is_diagnostic_only(self):
+        self.assertIn('.#checks.${ARCH}-linux.base-contract-probe', self.build)
+        self.assertIn('scripts/boot-base-contract.py --artifacts staging --arch "$ARCH"', self.build)
+        self.assertIn('--expected-contract 1 --accel tcg', self.build)
+        self.assertIn('--witness "diagnostics/base-contract-${ARCH}.json"', self.build)
+        self.assertIn('sudo modprobe vhost_vsock', self.build)
+        self.assertIn('sudo chmod a+rw /dev/vhost-vsock', self.build)
+        self.assertIn('qemu-system-arm', self.build)
+        self.assertIn('qemu-system-x86', self.build)
+        self.assertIn('name: base-contract-probe-${{ matrix.arch }}', self.build)
+        self.assertIn('.rootless-tenant.dev', self.build)
+        upload = self.build.split('- name: Upload the completed Linux-layer members')[1]
+        self.assertNotIn("cpio.gz", upload)
+        self.assertNotIn("rootless-microvm-dev", upload)
+        boot = self.build.split('- name: Boot every native published workload root')[1].split('- name:')[0]
+        self.assertNotIn("continue-on-error", boot)
+        self.assertNotIn("if:", boot)
+        self.assertNotIn("--plan", boot)
+
     def test_workflow_run_blocks_are_valid_bash(self):
         for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
             lines = path.read_text().splitlines()

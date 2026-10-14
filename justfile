@@ -165,6 +165,11 @@ e2e-rootless-qemu artifacts="result" binary="qemu-system-x86_64" accel="kvm":
 e2e-rootless-firecracker artifacts="result" binary="firecracker":
     scripts/e2e_boot.py firecracker '{{artifacts}}' --binary '{{binary}}' --rootfs-name rootfs.ext4 --rootfs-type ext4 --init /usr/local/bin/mvm-rootless-probe --ready-marker MVM-ROOTLESS-READY
 
+# Witness actual workload bases with a test-only boot payload, not a CLI runtime.
+# Pass --manifest/--artifacts and architecture-matched --probe arguments.
+e2e-base-contract *args:
+    python3 scripts/boot-base-contract.py "$@"
+
 # Boot the browser pack directly under headless Chromium.
 e2e-qemu-wasm pack chrome:
     scripts/run-qemu-wasm-smoke-chromium.py '{{pack}}' '{{chrome}}'

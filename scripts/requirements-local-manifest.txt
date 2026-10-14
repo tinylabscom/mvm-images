@@ -1,0 +1,10 @@
+# Repository observation uses only local object/index/config parsing APIs.
+# Install explicitly with PURE=1; no Dulwich native extension is required.
+--no-binary=dulwich
+dulwich==0.24.10
+urllib3==2.6.3
+# Local base-marker inspection dependencies (integration owned by issue #64).
+ext4==1.4.1
+cachetools==7.1.1
+crcmod==1.7
+typing-extensions==4.15.0; python_version < "3.12"

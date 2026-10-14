@@ -62,6 +62,23 @@ architecture. Host Python/static checks do not prove Linux builds or boots.
 There is no paired-source override, pin-advance procedure or host-runtime
 build/test harness.
 
+Local manifest production and its tests require Python 3.11+ and the pinned
+dependencies in `scripts/requirements-local-manifest.txt`. Install them in an
+isolated environment, not into the host's global Python:
+
+```sh
+python3 -m venv .venv
+PURE=1 .venv/bin/python -m pip install --no-binary=dulwich \
+  -r scripts/requirements-local-manifest.txt
+. .venv/bin/activate
+```
+
+The ordinary host suite also creates and inspects tiny real ext4 fixtures.
+Provide `mke2fs` and `debugfs` from e2fsprogs on `PATH` (on macOS, for example,
+the existing Homebrew e2fsprogs installation's `sbin` directory). These are
+host artifact checks, not a configured Linux build/boot boundary. CI provisions
+the tools explicitly.
+
 ```sh
 just list
 just build builder-vm
@@ -85,6 +102,36 @@ Use `just manifest --help` for artifact arguments. Local manifests take
 `--images-checkout` only; their `local_checkouts` producer contains only
 `images` identity at `local-dev` tier. A moved checkout invalidates that
 identity. Local manifests are not signed release evidence.
+
+Dirty checkout identities carry `fingerprint_version: 2` and hash canonical
+HEAD/index/worktree records through in-process repository APIs, not Git
+status/diff text. Clean records remain `{"state":"clean"}`. The paired strict
+consumer refuses historical V1 dirty manifests with rebuild guidance; rebuild
+those local sets rather than treating their old fingerprints as V2.
+
+**No Git environment setup is required for the normal workflow.** V2 defines a
+shared default that excludes host Git system config and system attributes,
+while retaining repository rules and declared HOME/XDG/global configuration.
+This is a versioned source-context policy, not a claim to reproduce the native
+Git CLI's entire ambient configuration stack, and not a fallback after errors.
+
+Advanced callers may opt into an exact accessible system config with
+`GIT_CONFIG_SYSTEM=/absolute/config/path`. System attributes remain excluded
+independently; `GIT_CONFIG_NOSYSTEM=true` takes precedence over the supplied
+file. Explicitly setting either NOSYSTEM control to false requests the relevant
+implicit system source, which requires a provable installation-data prefix.
+POSIX executable paths cannot prove compiled prefix/sysconfdir, so such requests
+and unresolved `%(prefix)` resources refuse with guidance to use absolute data
+paths. Windows retains its separately checked installation-data behavior.
+Use the same policy and optional overrides during paired verification.
+
+Every supplied workload ext4 root must contain the actual regular mode-0444
+contract marker with exact bytes `1\n`. Local inspection is read-only and
+in-process; missing, malformed, unsupported or disagreeing markers refuse
+emission. Partial local sets without a workload root retain the checkout's
+expected compatibility declaration, but do not constitute rootfs evidence.
+Release assembly independently inspects all six published workload roots
+(default production/dev and rootless production on both architectures).
 
 Built Linux artifacts are checked by the locally owned checker and
 `kernel/budgets.json`, not checks loaded from mvm. For a built x86_64 builder
@@ -117,6 +164,27 @@ They boot a probe-owned init with no runtime overlay or mvm-built bytes and
 never start `mvm`, `mvmctl` or `bin/dev`. Real boots require capable Linux
 runners. Rootless smoke directly witnesses UID 901, namespace creation,
 delegated cgroup v2, generic OCI tools and loopback-only networking.
+
+The separate base-contract witness boots each actual candidate workload root
+read-only with a tiny test-owned static BusyBox boot payload. Its derivations
+are `checks.<arch>-linux.base-contract-probe`, not published runtime roles.
+Supply one matching payload per guest architecture:
+
+```sh
+just e2e-base-contract --manifest candidate/image-set.json --artifacts candidate \
+  --probe x86_64=probes/base-contract-probe-x86_64.cpio.gz \
+  --probe aarch64=probes/base-contract-probe-aarch64.cpio.gz \
+  --witness evidence/base-contract.json
+```
+
+This requires usable host vsock and directly invoked QEMU with explicit devices
+and no NIC; missing capability is a refusal, not a successful skipped witness.
+The report binds the manifest, kernels, root filesystems and test payloads by
+digest. PR build witnesses cover each architecture's staged roots separately;
+the release gate boots every workload root against the assembled declaration
+before signing. Test payloads and witness reports remain diagnostic artifacts,
+outside the 17-member publication inventory. QEMU TCG evidence does not replace
+the required installed-product Linux Firecracker and Darwin HVF evidence.
 
 ## Release, reproduction and signatures
 

@@ -9,6 +9,8 @@ import re
 import struct
 import subprocess
 
+from ext4_contract import debugfs, read_base_image_contract
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,24 +38,9 @@ def check_budget(path: Path, arch: str) -> None:
     print(f"{arch}: {count} built-in symbols (budget {budget})")
 
 
-def debugfs(image: Path, command: str) -> str:
-    result = subprocess.run(["debugfs", "-R", command, str(image)], check=True,
-                            capture_output=True)
-    # Do not normalize CRLF: the contract marker is an exact byte promise.
-    return result.stdout.decode("utf-8")
-
-
 def check_rootfs(image: Path, builder: bool = False) -> None:
-    for path in ("/etc", "/etc/mvm"):
-        if "Type: directory" not in debugfs(image, f"stat {path}"):
-            raise ValueError(f"{image}: {path} must be a directory, not a symlink")
-    marker = "/etc/mvm/base-image-contract"
-    stat = debugfs(image, f"stat {marker}")
-    if "Type: regular" not in stat or debugfs(image, f"cat {marker}") != "1\n":
-        raise ValueError(f"{image}: missing regular contract-1 marker")
-    if re.search(r"Mode:\s+0*444\b", stat) is None:
-        raise ValueError(f"{image}: base-image contract marker must be mode 0444")
-    if "Inode:" in debugfs(image, "stat /init"):
+    read_base_image_contract(image)
+    if "Inode:" in debugfs(image, "stat /init", allow_missing=True):
         raise ValueError(f"{image}: base must not contain /init")
     for path in ("/mvm/runtime", "/mvm/sdk"):
         if "Type: directory" not in debugfs(image, f"stat {path}"):
@@ -81,7 +68,7 @@ def check_rootfs(image: Path, builder: bool = False) -> None:
     # Conventional executable directories contain only Linux packages.
     # The image-owned rootless smoke probe is the one permitted mvm prefix.
     for directory in ("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"):
-        listing = debugfs(image, f"ls -p {directory}")
+        listing = debugfs(image, f"ls -p {directory}", allow_missing=True)
         names = re.findall(r"/(mvm-[^/]+)/", listing)
         if any(name != "mvm-rootless-probe" for name in names):
             raise ValueError(f"{image}: guest runtime executable in {directory}: {names}")

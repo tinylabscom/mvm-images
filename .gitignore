@@ -4,5 +4,6 @@ result-*
 *.ext4
 *.tar.gz
 __pycache__/
+.venv/
 .worktrees/
 specs/scratch.md

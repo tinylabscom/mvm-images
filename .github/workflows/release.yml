@@ -68,6 +68,12 @@ jobs:
         with:
           name: qemu-wasm-site-pack
           path: release-assets
+      - name: Download architecture-matched test probes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: base-contract-probe-*
+          path: ${{ runner.temp }}/base-contract-probes
+          merge-multiple: true
       - name: Install pinned Nix and cosign
         uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
       - name: Install the pinned cosign tool
@@ -75,6 +81,25 @@ jobs:
           set -euo pipefail
           nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
           nix profile install "github:NixOS/nixpkgs/${nixpkgs_rev}#cosign"
+      - name: Install pinned ext4 inspection tools
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          tools=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/${nixpkgs_rev}#e2fsprogs")
+          test -x "$tools/bin/debugfs"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+      - name: Install pinned direct-VMM probe tools
+        run: |
+          set -euo pipefail
+          nixpkgs_rev=$(jq -er '.nodes.nixpkgs.locked.rev' flake.lock)
+          tools=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/${nixpkgs_rev}#qemu")
+          test -x "$tools/bin/qemu-system-x86_64"
+          test -x "$tools/bin/qemu-system-aarch64"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+          # Contract boots require vsock; an unavailable device is a refusal,
+          # never a NIC fallback or a successful skipped witness.
+          sudo modprobe vhost_vsock
+          sudo chmod a+rw /dev/vhost-vsock
       # The assembler also writes the build-provenance subjects: every member
       # artifact, pack manifest and SBOM, and image-set.json. It writes them
       # outside release-assets; publication uses it as the asset allowlist.
@@ -94,6 +119,20 @@ jobs:
             --issued-at "$issued_at" \
             --subjects "$subjects"
           printf 'subjects=%s\n' "$subjects" >> "$GITHUB_OUTPUT"
+      - name: Boot every candidate workload root and witness its declared marker
+        run: |
+          set -euo pipefail
+          python3 scripts/boot-base-contract.py \
+            --manifest release-assets/image-set.json --artifacts release-assets \
+            --probe "x86_64=$RUNNER_TEMP/base-contract-probes/base-contract-probe-x86_64.cpio.gz" \
+            --probe "aarch64=$RUNNER_TEMP/base-contract-probes/base-contract-probe-aarch64.cpio.gz" \
+            --accel tcg --witness "$RUNNER_TEMP/base-contract-boot-witness.json"
+      - name: Upload candidate contract witness as diagnostic evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-base-contract-boot-witness
+          path: ${{ runner.temp }}/base-contract-boot-witness.json
+          if-no-files-found: error
       - name: Sign every member pack and the image-set manifest
         env:
           COSIGN_YES: "true"

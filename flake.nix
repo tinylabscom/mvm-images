@@ -26,6 +26,11 @@
           };
         };
     in {
+      checks = nixpkgs.lib.genAttrs systems (system: {
+        base-contract-probe = import ./images/base-contract-probe.nix {
+          pkgs = nixpkgs.legacyPackages.${system};
+        };
+      });
       legacyPackages = nixpkgs.lib.genAttrs systems (system: {
         builder-vm = builderVm.packages.${system};
         default-tenant = defaultTenant.packages.${system};
