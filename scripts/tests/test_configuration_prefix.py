@@ -31,7 +31,11 @@ class SystemContextPolicyTests(unittest.TestCase):
             home.mkdir()
             ignore = home / "global-ignore"
             ignore.write_text("*.global-noise\n")
-            (home / ".gitconfig").write_text(f"[core]\nautocrlf=true\nexcludesfile={ignore}\n")
+            # Git config interprets backslash escapes; serialize Windows paths
+            # with forward slashes and quote spaces instead of embedding \t.
+            (home / ".gitconfig").write_text(
+                f'[core]\nautocrlf=true\nexcludesfile="{ignore.as_posix()}"\n'
+            )
             env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / "xdg"), "PATH": ""}
             with mock.patch.dict(os.environ, env, clear=True):
                 root = committed_repo(parent / "repo", {"a": "base\n", ".gitignore": "*.repo-noise\n"})
