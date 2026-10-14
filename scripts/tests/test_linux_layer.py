@@ -193,6 +193,29 @@ class LinuxLayerTests(unittest.TestCase):
                 with self.assertRaises(type(error)):
                     ext4_contract.read_base_image_contract(Path("fixture"))
 
+    def test_optional_missing_lookup_accepts_command_and_operand_diagnostics(self):
+        for diagnostic in (
+            b"stat: File not found by ext2_lookup /init",
+            b"/init: File not found by ext2_lookup ",
+        ):
+            result = subprocess.CompletedProcess(
+                [], 0, b"", b"debugfs 1.47.0 (5-Feb-2023)\n" + diagnostic + b"\n"
+            )
+            with self.subTest(diagnostic=diagnostic), \
+                 patch.object(ext4_contract.subprocess, "run", return_value=result):
+                self.assertEqual(
+                    ext4_contract.debugfs(Path("fixture"), "stat /init", allow_missing=True), ""
+                )
+                with self.assertRaises(ValueError):
+                    ext4_contract.debugfs(Path("fixture"), "stat /init")
+                with self.assertRaises(ValueError):
+                    ext4_contract.debugfs(Path("fixture"), "stat /other", allow_missing=True)
+        with patch.object(ext4_contract.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 0, b"unexpected output",
+                              b"debugfs 1.47.0 (5-Feb-2023)\n/init: File not found by ext2_lookup \n")):
+            with self.assertRaises(ValueError):
+                ext4_contract.debugfs(Path("fixture"), "stat /init", allow_missing=True)
+
     def test_pure_marker_rule_is_exact(self):
         validate = ext4_contract.validate_base_image_contract_marker
         self.assertEqual(validate(stat.S_IFREG | 0o444, b"1\n"), 1)

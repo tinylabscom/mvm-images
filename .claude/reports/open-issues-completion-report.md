@@ -202,3 +202,33 @@ concrete host-implementation blockers were found in that scoped review.
   and request protected image publication. Consumer lock advance comes last.
 
 No issue acceptance checkbox is marked complete by this report.
+
+## PR #69 first CI and platform corrections
+
+Initial immutable handoff: `a01ad750ac8c0fec0231050d72560af3e8b3993a`,
+draft https://github.com/tinylabscom/mvm-images/pull/69.
+
+- Lint run `38498950303`: ordinary Linux tests, action pins and Linux
+  fingerprint job succeeded; Windows fingerprint job failed.
+- Build run `38498950233`: both architecture jobs built the builder artifacts,
+  then refused the expected absent `/init` because Ubuntu debugfs prefixes its
+  precise missing-path diagnostic with the operand rather than the command.
+  No contract boots ran in those failed jobs.
+- Reproduce run `38498950229`: all six canonical role/architecture jobs reported
+  success for this exact initial commit. This is scoped CI evidence, not a live
+  release or installed-product result.
+
+Corrections retain strict validation:
+
+- Optional lookup permits only the precise command- or operand-prefixed
+  not-found diagnostic for its requested path, with no stdout; required
+  marker errors and unrelated diagnostics still refuse.
+- The local reader compares metadata within each query family: opening/final
+  descriptor `fstat` and initial/final pathname `lstat`, preserving the opening
+  device/inode gate. Heterogeneous Windows timestamp precision no longer causes
+  false mutation refusal. Real mutation/replacement and staged digest checks
+  remain enforced.
+
+Corrected host `just release-check`: **192 total, 191 executed passes, one APFS
+capability skip**, five BDD scenarios passed; `git diff --check` passed.
+Native Windows and both-architecture build/boot reruns remain required.

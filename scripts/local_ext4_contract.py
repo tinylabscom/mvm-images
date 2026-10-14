@@ -63,6 +63,9 @@ def read_base_image_contract(image: Path) -> int:
     identity = lambda value: (
         value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
     )
-    if identity(opened) != identity(after) or identity(after) != identity(current):
+    # Compare metadata within each query family: Windows fstat and lstat can
+    # report different timestamp precision for the same unchanged file.
+    # The opening device/inode gate above ties the descriptor to the path.
+    if identity(opened) != identity(after) or identity(before) != identity(current):
         raise ValueError(f"{image}: rootfs changed during marker inspection")
     return contract

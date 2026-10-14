@@ -32,9 +32,15 @@ def debugfs(image: Path, command: str, *, allow_missing: bool = False) -> str:
     if diagnostics and re.fullmatch(r"debugfs \d+\.\d+(?:\.\d+)? \([^)]+\)", diagnostics[0]):
         diagnostics.pop(0)
     if diagnostics:
-        missing = f"{command.split()[0]}: File not found by ext2_lookup "
+        tokens = command.split()
+        # e2fsprogs versions prefix lookup failures with either the command or
+        # its operand. Permit only an exact failure for the requested path.
+        missing = (
+            rf"(?:{re.escape(tokens[0])}|{re.escape(tokens[-1])}): "
+            rf"File not found by ext2_lookup(?: {re.escape(tokens[-1])})? *"
+        )
         if (allow_missing and len(diagnostics) == 1
-                and diagnostics[0].startswith(missing) and not result.stdout):
+                and re.fullmatch(missing, diagnostics[0]) and not result.stdout):
             return ""
         raise ValueError(f"{image}: debugfs {command!r}: {'; '.join(diagnostics)}")
     # No universal-newline conversion: the marker promises exact bytes.
