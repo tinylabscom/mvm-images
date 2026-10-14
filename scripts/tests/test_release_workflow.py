@@ -101,6 +101,46 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("if", mapping(reproduce, 4))
         self.assertNotIn("continue-on-error", mapping(reproduce, 4))
 
+    def test_ext4_inspection_tool_is_provisioned_from_existing_nixpkgs_pin(self):
+        tool = self.step_named("Install pinned ext4 inspection tools")
+        script = "\n".join(tool)
+        self.assertIn("jq -er '.nodes.nixpkgs.locked.rev' flake.lock", script)
+        self.assertIn('github:NixOS/nixpkgs/${nixpkgs_rev}#e2fsprogs', script)
+        self.assertIn('test -x "$tools/bin/debugfs"', script)
+        self.assertIn('echo "$tools/bin" >> "$GITHUB_PATH"', script)
+        self.assertIn("set -euo pipefail", script)
+        self.assertLess(self.position("Install pinned ext4"),
+                        self.position("Assemble the complete image set"))
+
+    def test_candidate_boots_are_mandatory_before_signing_and_not_release_members(self):
+        probes = self.step_named("Download architecture-matched test probes")
+        probe_inputs = mapping(block(probes, "with:", 8), 10)
+        self.assertEqual(probe_inputs["pattern"], "base-contract-probe-*")
+        self.assertNotIn("release-assets", probe_inputs["path"])
+        tools = "\n".join(self.step_named("Install pinned direct-VMM probe tools"))
+        self.assertIn('github:NixOS/nixpkgs/${nixpkgs_rev}#qemu', tools)
+        self.assertIn("sudo modprobe vhost_vsock", tools)
+        self.assertNotIn("|| true", tools)
+        boot = self.step_named("Boot every candidate workload root")
+        self.assertIsNone(step_field(boot, "if"))
+        self.assertIsNone(step_field(boot, "continue-on-error"))
+        script = "\n".join(boot)
+        self.assertIn("python3 scripts/boot-base-contract.py", script)
+        self.assertIn("--manifest release-assets/image-set.json", script)
+        for arch in ("x86_64", "aarch64"):
+            self.assertIn(f'--probe "{arch}=', script)
+        self.assertNotIn("--arch", script, "release boots must not filter an architecture")
+        self.assertNotIn("--plan", script, "a printed plan is not a boot witness")
+        self.assertLess(self.position("Assemble the complete image set"),
+                        self.position("Boot every candidate workload root"))
+        self.assertLess(self.position("Boot every candidate workload root"),
+                        self.position("Sign every member pack"))
+        evidence = mapping(block(
+            self.step_named("Upload candidate contract witness"), "with:", 8
+        ), 10)
+        self.assertNotIn("release-assets", evidence["path"])
+        self.assertEqual(evidence["if-no-files-found"], "error")
+
     def test_attestation_permissions_belong_to_the_publish_job_only(self):
         self.assertEqual(mapping(block(self.lines, "permissions:", 0), 2), {"contents": "read"})
         self.assertEqual(

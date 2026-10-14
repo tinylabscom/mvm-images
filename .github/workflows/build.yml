@@ -72,6 +72,36 @@ jobs:
           cp -L "$dev/mvm-meta.json" "staging/default-microvm-dev-meta-${ARCH}.json"
           python3 scripts/check_linux_layer.py --arch "$ARCH" --kernel "$dev/vmlinux" \
             --format "$format" --rootfs "$dev/rootfs.ext4"
+          rootless_dev=$(nix build ".#legacyPackages.${SYSTEM}.rootless-tenant.dev" --no-link --print-out-paths)
+          python3 scripts/check_linux_layer.py --arch "$ARCH" --kernel "$rootless_dev/vmlinux" \
+            --format "$format" --rootfs "$rootless_dev/rootfs.ext4" --profile rootless-tenant
+      - name: Boot every native published workload root with the contract probe
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          if [[ "$ARCH" == aarch64 ]]; then
+            sudo apt-get install -y qemu-system-arm
+          else
+            sudo apt-get install -y qemu-system-x86
+          fi
+          sudo modprobe vhost_vsock
+          sudo chmod a+rw /dev/vhost-vsock
+          probe=$(nix build ".#checks.${ARCH}-linux.base-contract-probe" --no-link --print-out-paths)
+          mkdir -p diagnostics
+          cp -L "$probe/base-contract-probe-${ARCH}.cpio.gz" diagnostics/
+          python3 scripts/boot-base-contract.py --artifacts staging --arch "$ARCH" \
+            --probe "${ARCH}=diagnostics/base-contract-probe-${ARCH}.cpio.gz" \
+            --expected-contract 1 --accel tcg \
+            --witness "diagnostics/base-contract-${ARCH}.json"
+      - name: Upload test-only contract probe and boot diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: base-contract-probe-${{ matrix.arch }}
+          if-no-files-found: ignore
+          path: diagnostics/
       - name: Build builder and workload kernels with local format and budget checks
         env:
           ARCH: ${{ matrix.arch }}

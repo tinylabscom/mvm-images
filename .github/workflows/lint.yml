@@ -34,7 +34,55 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Select the supported Python interpreter
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install real ext4 fixture tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs
+      - name: Isolated pure repository-observation dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/local-manifest-venv"
+          PURE=1 "$RUNNER_TEMP/local-manifest-venv/bin/python" -m pip install -r scripts/requirements-local-manifest.txt
+          echo "$RUNNER_TEMP/local-manifest-venv/bin" >> "$GITHUB_PATH"
       - name: Python unit tests
         run: python3 -m unittest discover -s scripts/tests -v
       - name: BDD image contracts
         run: ./scripts/run-bdd.py
+
+  # Real filesystem observation, not mocked OS behavior. Never invokes a VMM,
+  # mvm, mvmctl, or Git subprocesses to create fixtures or read identities.
+  checkout-fingerprint:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: bin/python
+          - os: windows-latest
+            python: Scripts/python.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      PURE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the supported Python interpreter
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependencies in an isolated environment
+        run: |
+          python -m venv "$RUNNER_TEMP/local-manifest-venv"
+          "$RUNNER_TEMP/local-manifest-venv/${{ matrix.python }}" -m pip install -r scripts/requirements-local-manifest.txt
+      - name: Fingerprint and local manifest filesystem tests
+        run: |
+          "$RUNNER_TEMP/local-manifest-venv/${{ matrix.python }}" -m unittest discover -s scripts/tests -p test_local_mvm.py -v
+          "$RUNNER_TEMP/local-manifest-venv/${{ matrix.python }}" -m unittest discover -s scripts/tests -p test_configuration_prefix.py -v

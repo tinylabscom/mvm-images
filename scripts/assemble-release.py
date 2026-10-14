@@ -9,10 +9,14 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# This script is also loaded by file path to reuse the producer member table.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ext4_contract import read_base_image_contract
 
 REPOSITORY = "tinylabscom/mvm-images"
 WORKFLOW = ".github/workflows/release.yml"
@@ -383,6 +387,29 @@ def assemble(args: argparse.Namespace) -> None:
         for artifact in member.artifacts:
             require_file(assets / artifact.name)
 
+    # One table owns the workload selection, including both dev roots. Hash
+    # before inspection and compare every later use and the final staged bytes.
+    inspected = {}
+    contracts = set()
+    for member in members:
+        if not isinstance(member.role, dict) or "workload_rootfs" not in member.role:
+            continue
+        roots = [artifact for artifact in member.artifacts if artifact.format == "ext4"]
+        if len(roots) != 1:
+            raise Refusal(f"{member.slug}: expected exactly one ext4 workload root")
+        path = assets / roots[0].name
+        before = sha256_file(path)
+        try:
+            contracts.add(read_base_image_contract(path))
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            raise Refusal(f"cannot inspect {path.name}: {error}") from error
+        if sha256_file(path) != before:
+            raise Refusal(f"artifact changed during contract inspection: {path.name}")
+        inspected[path.name] = before
+    if contracts != {base_image_contract(IMAGES_ROOT)}:
+        raise Refusal(f"inconsistent workload base-image contracts: {contracts}")
+    contract = next(iter(contracts))
+
     flake_lock = args.flake_lock.resolve()
     require_file(flake_lock)
     flake_hash = sha256_file(flake_lock)
@@ -447,7 +474,7 @@ def assemble(args: argparse.Namespace) -> None:
             "source_commit": args.source_commit,
         },
         "compatibility": {
-            "base_image_contract": base_image_contract(IMAGES_ROOT),
+            "base_image_contract": contract,
             "builder_cache_contract": cache,
             "builder_boot_abi": boot_abi,
         },
@@ -461,6 +488,14 @@ def assemble(args: argparse.Namespace) -> None:
         "members": rendered_members,
     }
     manifest_path = assets / "image-set.json"
+    for member in rendered_members:
+        for artifact in member["artifacts"]:
+            name = artifact["name"]
+            if name in inspected and (
+                artifact["sha256"] != inspected[name]
+                or sha256_file(assets / name) != inspected[name]
+            ):
+                raise Refusal(f"artifact changed after contract inspection: {name}")
     manifest_path.write_bytes(compact_json(manifest))
     manifest_hash = sha256_file(manifest_path)
     (assets / "images.lock").write_text(

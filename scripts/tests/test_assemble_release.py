@@ -5,6 +5,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from test_linux_layer import make_ext4
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/assemble-release.py"
@@ -46,10 +49,19 @@ class AssembleReleaseTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.assets = self.root / "assets"
         self.assets.mkdir()
+        fixture_dir = self.root / "fixture"
+        fixture_dir.mkdir()
+        fixture = self.root / "tiny.ext4"
+        make_ext4(fixture, fixture_dir)
         for member in ASSEMBLER.member_specs():
             for artifact in member.artifacts:
                 if not artifact.name.startswith("stage0-vmlinux-"):
-                    (self.assets / artifact.name).write_bytes(artifact.name.encode())
+                    data = fixture.read_bytes() if (
+                        isinstance(member.role, dict)
+                        and "workload_rootfs" in member.role
+                        and artifact.format == "ext4"
+                    ) else artifact.name.encode()
+                    (self.assets / artifact.name).write_bytes(data)
         for arch in ASSEMBLER.ARCHES:
             (self.assets / f"vmlinux-{arch}-builder").write_bytes(arch.encode())
         self.subjects = self.root / "subjects.sha256"
@@ -135,6 +147,51 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertIn("outside", result.stderr)
         self.assertFalse(inside.exists())
         self.assertFalse((self.assets / "image-set.json").exists())
+
+    def test_each_workload_root_is_actual_artifact_evidence(self):
+        roots = [a.name for m in ASSEMBLER.member_specs()
+                 if isinstance(m.role, dict) and "workload_rootfs" in m.role
+                 for a in m.artifacts if a.format == "ext4"]
+        self.assertEqual(len(roots), 6)
+        for name in roots:
+            path = self.assets / name
+            original = path.read_bytes()
+            path.write_bytes(b"not ext4")
+            result = self.run_assembler()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(name, result.stderr)
+            self.assertFalse(self.subjects.exists())
+            path.write_bytes(original)
+
+    def test_refuses_mixed_contract_and_mutation_during_or_after_inspection(self):
+        args = ASSEMBLER.parser().parse_args([
+            "--artifacts", str(self.assets), "--tag", "image-set/v0.1.0",
+            "--source-commit", "b" * 40, "--issued-at", "2026-09-22T12:00:00Z",
+            "--flake-lock", str(self.lock), "--subjects", str(self.subjects),
+        ])
+        with patch.object(ASSEMBLER, "read_base_image_contract", side_effect=[1, 1, 1, 1, 1, 2]):
+            with self.assertRaisesRegex(ASSEMBLER.Refusal, "inconsistent"):
+                ASSEMBLER.assemble(args)
+        reader = ASSEMBLER.read_base_image_contract
+        def mutate(path):
+            value = reader(path)
+            with path.open("ab") as handle:
+                handle.write(b"mutation")
+            return value
+        with patch.object(ASSEMBLER, "read_base_image_contract", side_effect=mutate):
+            with self.assertRaisesRegex(ASSEMBLER.Refusal, "changed during"):
+                ASSEMBLER.assemble(args)
+        sbom = ASSEMBLER.sbom_for
+        def late_mutation(*values):
+            result = sbom(*values)
+            path = self.assets / "default-microvm-rootfs-x86_64.ext4"
+            with path.open("ab") as handle:
+                handle.write(b"late mutation")
+            return result
+        with patch.object(ASSEMBLER, "sbom_for", side_effect=late_mutation):
+            with self.assertRaisesRegex(ASSEMBLER.Refusal, "changed after"):
+                ASSEMBLER.assemble(args)
+        self.assertFalse(self.subjects.exists())
 
 
 if __name__ == "__main__":

@@ -2,11 +2,35 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import ext4_contract
+
+
+def make_ext4(image, directory, marker=b"1\n", mode=0o444, symlink=False):
+    """Tiny real filesystem; missing tools fail with an actionable OS error."""
+    root = directory / "root"
+    target = root / "etc/mvm/base-image-contract"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if marker is not None:
+        if symlink:
+            target.symlink_to("other")
+        else:
+            target.write_bytes(marker)
+            target.chmod(mode)
+    subprocess.run(
+        ["mke2fs", "-q", "-F", "-t", "ext4", "-d", str(root), str(image), "4096"],
+        check=True, capture_output=True,
+    )
+
+
 SPEC = importlib.util.spec_from_file_location("linux_layer", ROOT / "scripts/check_linux_layer.py")
 layer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(layer)
@@ -114,7 +138,10 @@ class LinuxLayerTests(unittest.TestCase):
 
     def test_root_contract_rejects_marker_and_runtime_fallback_defects(self):
         values = self.rootfs_fixture()
-        with patch.object(layer, "debugfs", side_effect=lambda _, cmd: values.get(cmd, "")):
+        def fake(_, cmd, **kwargs):
+            return values.get(cmd, "")
+        with patch.object(layer, "debugfs", side_effect=fake), \
+             patch.object(ext4_contract, "debugfs", side_effect=fake):
             layer.check_rootfs(Path("fixture"), builder=True)
             for command, bad in (
                 ("cat /etc/mvm/base-image-contract", "1"),
@@ -132,6 +159,73 @@ class LinuxLayerTests(unittest.TestCase):
                 with self.subTest(command=command), patch.dict(values, {command: bad}):
                     with self.assertRaises(ValueError):
                         layer.check_rootfs(Path("fixture"), builder=True)
+
+    def test_real_ext4_marker_contract(self):
+        for marker, mode, symlink in (
+            (b"1\n", 0o444, False), (None, 0o444, False),
+            (b"1", 0o444, False), (b"1\r\n", 0o444, False),
+            (b"2\n", 0o444, False), (b"1\n", 0o644, False),
+            (b"1\n", 0o444, True),
+        ):
+            with self.subTest(marker=marker, mode=mode, symlink=symlink), \
+                 tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                image = directory / "tiny.ext4"
+                make_ext4(image, directory, marker, mode, symlink)
+                if marker == b"1\n" and mode == 0o444 and not symlink:
+                    self.assertEqual(ext4_contract.read_base_image_contract(image), 1)
+                else:
+                    with self.assertRaises(ValueError):
+                        ext4_contract.read_base_image_contract(image)
+
+    def test_debugfs_semantic_failure_and_missing_tool_fail_closed(self):
+        for stderr in (
+            b"debugfs 1.47.3 (8-Jul-2025)\ncat: File not found by ext2_lookup x\n",
+            b"debugfs 1.47.3 (8-Jul-2025)\nshort read\n",
+            b"debugfs 1.47.3 (8-Jul-2025)\nwarning: broken filesystem\n",
+        ):
+            with patch.object(ext4_contract.subprocess, "run", return_value=
+                              subprocess.CompletedProcess([], 0, b"1\n", stderr)):
+                with self.assertRaises(ValueError):
+                    ext4_contract.debugfs(Path("fixture"), "cat marker")
+        for error in (FileNotFoundError("debugfs"), subprocess.CalledProcessError(1, "debugfs")):
+            with patch.object(ext4_contract.subprocess, "run", side_effect=error):
+                with self.assertRaises(type(error)):
+                    ext4_contract.read_base_image_contract(Path("fixture"))
+
+    def test_optional_missing_lookup_accepts_command_and_operand_diagnostics(self):
+        for diagnostic in (
+            b"stat: File not found by ext2_lookup /init",
+            b"/init: File not found by ext2_lookup ",
+        ):
+            result = subprocess.CompletedProcess(
+                [], 0, b"", b"debugfs 1.47.0 (5-Feb-2023)\n" + diagnostic + b"\n"
+            )
+            with self.subTest(diagnostic=diagnostic), \
+                 patch.object(ext4_contract.subprocess, "run", return_value=result):
+                self.assertEqual(
+                    ext4_contract.debugfs(Path("fixture"), "stat /init", allow_missing=True), ""
+                )
+                with self.assertRaises(ValueError):
+                    ext4_contract.debugfs(Path("fixture"), "stat /init")
+                with self.assertRaises(ValueError):
+                    ext4_contract.debugfs(Path("fixture"), "stat /other", allow_missing=True)
+        with patch.object(ext4_contract.subprocess, "run", return_value=
+                          subprocess.CompletedProcess([], 0, b"unexpected output",
+                              b"debugfs 1.47.0 (5-Feb-2023)\n/init: File not found by ext2_lookup \n")):
+            with self.assertRaises(ValueError):
+                ext4_contract.debugfs(Path("fixture"), "stat /init", allow_missing=True)
+
+    def test_pure_marker_rule_is_exact(self):
+        validate = ext4_contract.validate_base_image_contract_marker
+        self.assertEqual(validate(stat.S_IFREG | 0o444, b"1\n"), 1)
+        for mode in (0o444, stat.S_IFLNK | 0o444, stat.S_IFREG | 0o644,
+                     stat.S_IFREG | 0o4444):
+            with self.assertRaises(ValueError):
+                validate(mode, b"1\n")
+        for body in (b"", b"1", b"1\r\n", b"2\n", b"01\n", b"1\n\n", b"\xff"):
+            with self.assertRaises(ValueError):
+                validate(stat.S_IFREG | 0o444, body)
 
 
 if __name__ == "__main__":
