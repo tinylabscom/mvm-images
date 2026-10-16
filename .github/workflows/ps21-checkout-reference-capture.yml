@@ -1,0 +1,102 @@
+name: PS21 checkout reference capture (one-off)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [validation/ps21-checkout-reference-capture]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Pins verified against images main f5ed151 build.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify frozen source and neutral inputs before capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p capture
+          python3.12 - <<'PY'
+          import ast, hashlib, json, pathlib, platform, sys
+          assert sys.platform == "linux" and sys.version_info[:2] == (3, 12)
+          runner = pathlib.Path("scripts/reference-tests/test_local_producer_pair.py")
+          assert hashlib.sha256(runner.read_bytes()).hexdigest() == "49e5ca6a11b624859e51129a27f57f0e247f965776dbd5cab61fdd1c3ddd4a6f"
+          constants = {}
+          for node in ast.parse(runner.read_bytes()).body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id in {
+                          "REVISION", "SOURCE_HASH", "DATA_HASH", "MANIFESTS_HASH", "DEPENDENCIES"
+                      }:
+                          constants[target.id] = ast.literal_eval(node.value)
+          sources = {
+              "emit-local-manifest.py": constants["SOURCE_HASH"],
+              "local_ext4_contract.py": "be996fa352157dda034f6b2e41917522f4b4c7eb681712356ab800cccf1c0aa7",
+              "ext4_contract.py": "23b51291566a3d2c2e68b3ce6e18c4baba2e436f59a2eba0fc781297842fa795",
+              "tests/test_local_mvm.py": "f8be49e3de18d1c6f2d87627cbf25e38b0d32223257ffde00c17dafdf49f23cc",
+              "tests/ext4_fixture.py": "d5d4e640117b42272e2bb205e075f881ec3ee6975e0929ab71d419d462e1cf6c",
+          }
+          hashes = {str(runner): hashlib.sha256(runner.read_bytes()).hexdigest()}
+          for name, expected in sources.items():
+              path = pathlib.Path("scripts") / name
+              hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert hashes[str(path)] == expected, str(path)
+          inputs = {
+              "v2": constants["DATA_HASH"], "manifests": constants["MANIFESTS_HASH"],
+              "rootfs": "d9855dd4f4e5bf1d9005fc553c750a0b9ca31a325c9d8a1c2d151ffe70108a96",
+          }
+          for name, expected in inputs.items():
+              path = pathlib.Path(f"scripts/reference-tests/fixtures/local-producer-{name}.json")
+              hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+              assert hashes[str(path)] == expected, str(path)
+          provenance = {
+              "producer_revision": constants["REVISION"], "file_sha256": hashes,
+              "required_dependencies": constants["DEPENDENCIES"],
+              "python": sys.version, "platform": platform.platform(),
+          }
+          pathlib.Path("capture/source-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+          PY
+      - name: Prepare isolated pinned public Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3.12 -m venv "$RUNNER_TEMP/ps21-venv"
+          PURE=1 "$RUNNER_TEMP/ps21-venv/bin/python" -m pip install \
+            --index-url https://pypi.org/simple --no-binary=dulwich \
+            --report capture/dependency-install.json \
+            dulwich==0.24.10 ext4==1.4.1 urllib3==2.6.3 cachetools==7.1.1 crcmod==1.7
+          "$RUNNER_TEMP/ps21-venv/bin/python" -m pip freeze --all > capture/dependencies.txt
+      - name: Capture actual independent Linux observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/ps21-venv/bin/python" scripts/reference-tests/test_local_producer_pair.py \
+            scripts scripts/reference-tests/fixtures/local-producer-v2.json \
+            scripts/reference-tests/fixtures/local-producer-manifests.json \
+            scripts/reference-tests/fixtures/local-producer-rootfs.json \
+            --capture-observations > capture/linux-observations.json
+          python3.12 - <<'PY'
+          import json, pathlib, sys
+          assert sys.platform == "linux"
+          packet = json.loads(pathlib.Path("capture/linux-observations.json").read_bytes())
+          assert all("unsupported_on_capture" not in case for case in packet["observation_cases"])
+          raw = next(c for c in packet["observation_cases"] if c["name"] == "non-utf8-name")
+          assert len(raw["expected"]) == 3
+          assert len({json.dumps(v, sort_keys=True) for v in raw["expected"]}) == 3
+          PY
+          printf '%s\n' "$GITHUB_SHA" > capture/workflow-checkout.txt
+          (cd capture && sha256sum linux-observations.json > linux-observations.json.sha256)
+          (cd capture && sha256sum source-provenance.json dependency-install.json dependencies.txt workflow-checkout.txt > provenance.sha256)
+      - name: Upload test-data evidence only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ps21-linux-reference-${{ github.run_id }}-${{ github.run_attempt }}
+          path: capture/
+          if-no-files-found: error
+          retention-days: 30
