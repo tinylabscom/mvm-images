@@ -18,8 +18,8 @@ jobs:
       - name: Install just (command runner)
         run: |
           set -euo pipefail
-          # Install Rust toolchain and compile `just` so we have a known-good binary
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          # Install the pinned Rust toolchain and compile `just`.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1
           source "$HOME/.cargo/env"
           cargo install --locked just
       - name: Build image derivations (fast subset)
