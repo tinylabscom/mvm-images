@@ -51,7 +51,7 @@ jobs:
           # The repo exposes a qemu smoke harness; run the smoke for x86_64
           just bdd
       - name: Upload build result artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: image-result
           path: result
@@ -65,7 +65,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download build result artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: image-result
           path: ./result
@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg --rootfs-type ext4 --witness /tmp/qemu-boot-witness.json
       - name: Upload witness
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: qemu-boot-witness
           path: /tmp/qemu-boot-witness.json
@@ -109,7 +109,7 @@ jobs:
           fi
       - name: Download build result artifact
         if: steps.kvm.outputs.available == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: image-result
           path: ./result
@@ -144,7 +144,7 @@ jobs:
           python3 scripts/e2e_boot.py firecracker ./result --binary "$firecracker_bin" --rootfs-type ext4 --witness /tmp/firecracker-boot-witness.json
       - name: Upload firecracker witness
         if: steps.kvm.outputs.available == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: firecracker-boot-witness
           path: /tmp/firecracker-boot-witness.json
@@ -158,7 +158,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Download build result artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: image-result
           path: ./result
@@ -172,7 +172,7 @@ jobs:
           set -euo pipefail
           python3 scripts/e2e_boot.py qemu ./result --binary qemu-system-x86_64 --accel tcg --rootfs-type ext4 --witness /tmp/macos-boot-witness.json
       - name: Upload macOS witness
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: macos-boot-witness
           path: /tmp/macos-boot-witness.json
