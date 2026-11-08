@@ -2,7 +2,7 @@
 # from the authenticated CLI boot payload, never from this filesystem.
 { pkgs }:
 { name, packages ? [ ], extraFiles ? { }, builderUid ? null,
-  sealed ? true }:
+  sealed ? true, compositionTar ? false }:
 assert builderUid == null || builderUid == 902;
 let
   inherit (pkgs) lib;
@@ -21,8 +21,10 @@ let
     '') extraFiles);
 in
 pkgs.runCommand "${name}-rootfs" {
+  outputs = [ "out" ] ++ lib.optional compositionTar "composition";
   nativeBuildInputs = [
     pkgs.e2fsprogs pkgs.coreutils pkgs.findutils pkgs.fakeroot pkgs.libfaketime
+    pkgs.gnutar pkgs.gzip
   ];
   passthru = {
     rootfsClosureInfo = closure;
@@ -114,6 +116,16 @@ pkgs.runCommand "${name}-rootfs" {
       -U 00000000-0000-0000-0000-000000000001 \
       -E lazy_itable_init=0,lazy_journal_init=0,hash_seed=00000000-0000-0000-0000-000000000002 \
       "$out"
+    ${lib.optionalString compositionTar ''
+      # Capture the same fakeroot-owned tree that mkfs imported. The archive
+      # is a signed build input, never another guest root or runtime role.
+      set -o pipefail
+      mkdir -p "$composition"
+      tar --sort=name --format=posix --numeric-owner --hard-dereference --mtime=@1 \
+        --pax-option=delete=atime,delete=ctime \
+        --xattrs --xattrs-include='*' -C root -cf - . \
+        | gzip -n -9 > "$composition/rootfs.tar.gz"
+    ''}
   IMAGE
   fsck.ext4 -n -f "$out"
 ''

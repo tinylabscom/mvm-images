@@ -97,6 +97,7 @@
           rootfsPkg = (import ../mk-rootfs.nix { inherit pkgs; }) {
             name = imageName;
             inherit sealed;
+            compositionTar = sealed;
             # Only static busybox is needed in the default Linux base.
             packages = [ ];
           };
@@ -163,6 +164,9 @@
             }
 
             cp ${rootfsPkg} $out/rootfs.ext4
+            ${nixpkgs.lib.optionalString sealed ''
+              cp ${rootfsPkg.composition}/rootfs.tar.gz $out/rootfs.tar.gz
+            ''}
 
             # Preserve the exact registered runtime closure as a release
             # provenance artifact. The footprint ledger validates every line

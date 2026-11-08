@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +60,66 @@ def sha256_file(path: Path) -> str:
             digest.update(block)
     return digest.hexdigest()
 
+def inspect_composition_tar(path: Path, contract: int) -> None:
+    """Reject a source archive that cannot represent the generic Linux base."""
+    if path.stat().st_size > 2 * 1024 ** 3:
+        raise Refusal(f"composition source exceeds 2 GiB: {path.name}")
+    entries = 0
+    expanded = 0
+    marker = False
+    worker = False
+    seen: set[str] = set()
+    claimed: dict[str, str] = {}
+    try:
+        with tarfile.open(path, mode="r|gz") as archive:
+            for item in archive:
+                entries += 1
+                expanded += item.size
+                if entries > 200_000 or expanded > 4 * 1024 ** 3:
+                    raise Refusal(f"composition source exceeds entry or content budget: {path.name}")
+                name = "" if item.name in (".", "./") else item.name.removeprefix("./").rstrip("/")
+                if not name and item.name in (".", "./") and item.isdir():
+                    if (item.uid != 0 or item.gid != 0
+                            or any(key.startswith("SCHILY.xattr.") for key in item.pax_headers)):
+                        raise Refusal(f"unsafe composition source root: {path.name}")
+                    continue
+                parts = name.split("/")
+                if (not name or name.startswith("/") or any(part in ("", ".", "..") for part in parts)
+                        or any(part.startswith(".wh.") for part in parts)
+                        or len(name.encode("utf-8")) > 4096
+                        or name in seen
+                        or not (item.isfile() or item.isdir() or item.issym())
+                        or item.mode & 0o6000
+                        or any(key.startswith("SCHILY.xattr.") for key in item.pax_headers)):
+                    raise Refusal(f"unsafe composition source member {item.name!r}")
+                seen.add(name)
+                for depth in range(1, len(parts)):
+                    parent = "/".join(parts[:depth])
+                    if claimed.get(parent) == "leaf":
+                        raise Refusal(f"composition source traverses a file: {item.name!r}")
+                    claimed[parent] = "directory"
+                kind = "directory" if item.isdir() else "leaf"
+                if name in claimed and (claimed[name] == "leaf" or kind == "leaf"):
+                    raise Refusal(f"composition source replaces a prior path: {item.name!r}")
+                claimed[name] = kind
+                if len(claimed) > 200_000:
+                    raise Refusal(f"composition source exceeds path budget: {path.name}")
+                if name == "etc/mvm/base-image-contract":
+                    value = archive.extractfile(item) if item.isfile() else None
+                    if (value is None or item.size != len(f"{contract}\n")
+                            or value.read(item.size + 1) != f"{contract}\n".encode()
+                            or item.uid != 0 or item.gid != 0 or item.mode != 0o444):
+                        raise Refusal(f"composition source base contract differs: {path.name}")
+                    marker = True
+                elif name == "home/mvm-worker":
+                    if not item.isdir() or item.uid != 901 or item.gid != 901:
+                        raise Refusal(f"composition source worker ownership differs: {path.name}")
+                    worker = True
+    except (OSError, UnicodeError, tarfile.TarError) as error:
+        raise Refusal(f"cannot inspect composition source {path.name}: {error}") from error
+    if not marker or not worker:
+        raise Refusal(f"composition source lacks base contract or worker identity: {path.name}")
+
 
 def compact_json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode()
@@ -103,6 +164,7 @@ def member_specs() -> tuple[Member, ...]:
                         Artifact(
                             f"default-microvm-rootfs-{arch}.roothash", "verity_root_hash"
                         ),
+                        Artifact(f"default-microvm-rootfs-{arch}.tar.gz", "tar_gz"),
                     ),
                     ("virtio_blk", "dm_verity"),
                 ),
@@ -126,6 +188,7 @@ def member_specs() -> tuple[Member, ...]:
                         Artifact(
                             f"rootless-microvm-rootfs-{arch}.roothash", "verity_root_hash"
                         ),
+                        Artifact(f"rootless-microvm-rootfs-{arch}.tar.gz", "tar_gz"),
                     ),
                     ("virtio_blk", "dm_verity"),
                 ),
@@ -409,6 +472,20 @@ def assemble(args: argparse.Namespace) -> None:
     if contracts != {base_image_contract(IMAGES_ROOT)}:
         raise Refusal(f"inconsistent workload base-image contracts: {contracts}")
     contract = next(iter(contracts))
+    for member in members:
+        if not isinstance(member.role, dict) or "workload_rootfs" not in member.role:
+            continue
+        sources = [artifact for artifact in member.artifacts if artifact.format == "tar_gz"]
+        if member.build_mode is None:
+            if len(sources) != 1:
+                raise Refusal(f"{member.slug}: expected one composition source")
+            path = assets / sources[0].name
+            before = sha256_file(path)
+            inspect_composition_tar(path, contract)
+            if sha256_file(path) != before:
+                raise Refusal(f"artifact changed during composition inspection: {path.name}")
+        elif sources:
+            raise Refusal(f"{member.slug}: dev base must not publish a composition source")
 
     flake_lock = args.flake_lock.resolve()
     require_file(flake_lock)

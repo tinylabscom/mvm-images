@@ -24,6 +24,8 @@ class CanonicalReproducibilityTests(unittest.TestCase):
             self.assertNotIn(retired, workflow)
         self.assertIn("--rebuild", script)
         self.assertIn('"${ref}.rootfs"', script)
+        self.assertIn('"${ref}.rootfs.composition"', script)
+        self.assertIn("rootfs.tar.gz", script)
         self.assertIn("- images/**", workflow)
 
     def test_does_not_compare_with_retired_mvm_image_recipes(self):
