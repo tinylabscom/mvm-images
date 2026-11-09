@@ -11,8 +11,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # This script is also loaded by file path to reuse the producer member table.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -60,6 +61,49 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def inspect_base_composition_tar(path: Path, contract: int) -> None:
+    """Bound and inspect a composition input before signing its digest."""
+    if not 0 < path.stat().st_size <= 2 * 1024**3:
+        raise Refusal(f"invalid base composition archive size: {path.name}")
+    marker = None
+    worker = None
+    names: set[str] = set()
+    count = size = 0
+    try:
+        with tarfile.open(path, mode="r|gz") as archive:
+            for member in archive:
+                count += 1
+                size += member.size
+                name = member.name.removeprefix("./")
+                parts = PurePosixPath(name).parts
+                if (
+                    count > 200_000 or size > 4 * 1024**3
+                    or name in names
+                    or name.startswith("/")
+                    or len(name.encode()) > 4096
+                    or (name != "." and (not parts or str(PurePosixPath(name)) != name))
+                    or (name == "." and not member.isdir())
+                    or not (member.isfile() or member.isdir() or member.issym())
+                    or member.mode & 0o6000
+                    or member.pax_headers
+                    or member.uid not in (0, 901, 987, 988, 989)
+                    or member.gid not in (0, 901, 987, 988, 989)
+                    or (not member.isfile() and member.size != 0)
+                ):
+                    raise Refusal(f"unsafe base composition archive: {path.name}")
+                names.add(name)
+                if name == "etc/mvm/base-image-contract":
+                    if not member.isfile() or member.mode != 0o444 or member.uid != 0 or member.gid != 0 or member.size != 2:
+                        raise Refusal(f"invalid base composition contract: {path.name}")
+                    marker = archive.extractfile(member).read(3)
+                if name == "home/mvm-worker":
+                    worker = (member.isdir() and member.uid == 901 and member.gid == 901)
+    except (OSError, EOFError, tarfile.TarError) as error:
+        raise Refusal(f"cannot inspect base composition archive {path.name}: {error}") from error
+    if marker != f"{contract}\n".encode() or worker is not True:
+        raise Refusal(f"base composition contract or workload identity differs: {path.name}")
+
+
 def compact_json(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode()
 
@@ -97,6 +141,7 @@ def member_specs() -> tuple[Member, ...]:
                     target,
                     (
                         Artifact(f"default-microvm-rootfs-{arch}.ext4", "ext4"),
+                        Artifact(f"default-microvm-rootfs-{arch}.tar.gz", "tar_gz"),
                         Artifact(
                             f"default-microvm-rootfs-{arch}.verity", "verity_hash_tree"
                         ),
@@ -120,6 +165,7 @@ def member_specs() -> tuple[Member, ...]:
                     target,
                     (
                         Artifact(f"rootless-microvm-rootfs-{arch}.ext4", "ext4"),
+                        Artifact(f"rootless-microvm-rootfs-{arch}.tar.gz", "tar_gz"),
                         Artifact(
                             f"rootless-microvm-rootfs-{arch}.verity", "verity_hash_tree"
                         ),
@@ -400,12 +446,25 @@ def assemble(args: argparse.Namespace) -> None:
         path = assets / roots[0].name
         before = sha256_file(path)
         try:
-            contracts.add(read_base_image_contract(path))
+            observed_contract = read_base_image_contract(path)
         except (ValueError, OSError, subprocess.CalledProcessError) as error:
             raise Refusal(f"cannot inspect {path.name}: {error}") from error
+        contracts.add(observed_contract)
         if sha256_file(path) != before:
             raise Refusal(f"artifact changed during contract inspection: {path.name}")
         inspected[path.name] = before
+        archives = [artifact for artifact in member.artifacts if artifact.format == "tar_gz"]
+        if member.build_mode is None:
+            if len(archives) != 1:
+                raise Refusal(f"{member.slug}: expected exactly one base composition tar")
+            archive_path = assets / archives[0].name
+            archive_before = sha256_file(archive_path)
+            inspect_base_composition_tar(archive_path, observed_contract)
+            if sha256_file(archive_path) != archive_before:
+                raise Refusal(f"artifact changed during composition inspection: {archive_path.name}")
+            inspected[archive_path.name] = archive_before
+        elif archives:
+            raise Refusal(f"{member.slug}: dev root cannot publish a composition tar")
     if contracts != {base_image_contract(IMAGES_ROOT)}:
         raise Refusal(f"inconsistent workload base-image contracts: {contracts}")
     contract = next(iter(contracts))

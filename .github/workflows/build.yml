@@ -63,6 +63,7 @@ jobs:
             for suffix in ext4 verity roothash; do
               cp -L "$image/rootfs.$suffix" "staging/${profile}-microvm-rootfs-${ARCH}.$suffix"
             done
+            cp -L "$image/rootfs.tar.gz" "staging/${profile}-microvm-rootfs-${ARCH}.tar.gz"
             python3 scripts/check_linux_layer.py --arch "$ARCH" --kernel "$image/vmlinux" \
               --format "$format" --rootfs "$image/rootfs.ext4" --profile "${profile}-tenant"
           done
@@ -130,10 +131,12 @@ jobs:
             staging/builder-vm-rootfs-${{ matrix.arch }}.ext4
             staging/default-microvm-vmlinux-${{ matrix.arch }}
             staging/default-microvm-rootfs-${{ matrix.arch }}.ext4
+            staging/default-microvm-rootfs-${{ matrix.arch }}.tar.gz
             staging/default-microvm-rootfs-${{ matrix.arch }}.verity
             staging/default-microvm-rootfs-${{ matrix.arch }}.roothash
             staging/rootless-microvm-vmlinux-${{ matrix.arch }}
             staging/rootless-microvm-rootfs-${{ matrix.arch }}.ext4
+            staging/rootless-microvm-rootfs-${{ matrix.arch }}.tar.gz
             staging/rootless-microvm-rootfs-${{ matrix.arch }}.verity
             staging/rootless-microvm-rootfs-${{ matrix.arch }}.roothash
             staging/default-microvm-dev-vmlinux-${{ matrix.arch }}

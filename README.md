@@ -38,6 +38,11 @@ Both `x86_64` and `aarch64` have separate generic profiles:
   container filesystems, `crun`, `fuse-overlayfs` and writable-volume-backed
   storage, preserving verified boot, storage, egress and admission.
 
+Each sealed workload root also emits a deterministic `rootfs.tar.gz` from the
+same fakeroot tree as its ext4. The extra artifact is for verified composition,
+not a second boot root; neither local builds nor this staged source change
+authorize publication of a new signed set.
+
 Select kernel and rootfs from the same profile. Do not widen the default
 kernel for rootless consumers or add application-specific packages or names.
 Every base declares `/etc/mvm/base-image-contract` with exact bytes `1\n`,

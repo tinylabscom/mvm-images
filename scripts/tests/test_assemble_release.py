@@ -1,7 +1,10 @@
 import importlib.util
+import gzip
+import io
 import json
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +18,20 @@ SPEC = importlib.util.spec_from_file_location("assemble_release", SCRIPT)
 ASSEMBLER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ASSEMBLER
 SPEC.loader.exec_module(ASSEMBLER)
+
+
+def composition_tar(marker_bytes=b"1\n", worker_uid=901):
+    tar_bytes = io.BytesIO()
+    with tarfile.open(fileobj=tar_bytes, mode="w") as archive:
+        marker = tarfile.TarInfo("etc/mvm/base-image-contract")
+        marker.size = len(marker_bytes)
+        marker.mode = 0o444
+        archive.addfile(marker, io.BytesIO(marker_bytes))
+        worker = tarfile.TarInfo("home/mvm-worker")
+        worker.type = tarfile.DIRTYPE
+        worker.uid = worker.gid = worker_uid
+        archive.addfile(worker)
+    return gzip.compress(tar_bytes.getvalue(), mtime=0)
 
 
 class ContractTests(unittest.TestCase):
@@ -53,14 +70,16 @@ class AssembleReleaseTests(unittest.TestCase):
         fixture_dir.mkdir()
         fixture = self.root / "tiny.ext4"
         make_ext4(fixture, fixture_dir)
+        composition = composition_tar()
         for member in ASSEMBLER.member_specs():
             for artifact in member.artifacts:
                 if not artifact.name.startswith("stage0-vmlinux-"):
-                    data = fixture.read_bytes() if (
-                        isinstance(member.role, dict)
-                        and "workload_rootfs" in member.role
-                        and artifact.format == "ext4"
-                    ) else artifact.name.encode()
+                    if isinstance(member.role, dict) and "workload_rootfs" in member.role:
+                        data = fixture.read_bytes() if artifact.format == "ext4" else (
+                            composition if artifact.format == "tar_gz" else artifact.name.encode()
+                        )
+                    else:
+                        data = artifact.name.encode()
                     (self.assets / artifact.name).write_bytes(data)
         for arch in ASSEMBLER.ARCHES:
             (self.assets / f"vmlinux-{arch}-builder").write_bytes(arch.encode())
@@ -107,6 +126,12 @@ class AssembleReleaseTests(unittest.TestCase):
             for profile in ("default_tenant", "rootless_tenant"):
                 self.assertIn({"workload_kernel": profile}, roles)
                 self.assertIn({"workload_rootfs": profile}, roles)
+                root = next(m for m in required if m["target"] == {"arch": arch}
+                            and m["role"] == {"workload_rootfs": profile})
+                self.assertEqual(
+                    [a["format"] for a in root["artifacts"]],
+                    ["ext4", "tar_gz", "verity_hash_tree", "verity_root_hash"],
+                )
             self.assertEqual(
                 (self.assets / f"stage0-vmlinux-{arch}").read_bytes(),
                 (self.assets / f"vmlinux-{arch}-builder").read_bytes(),
@@ -122,6 +147,23 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertIn(missing.name, result.stderr)
         self.assertFalse((self.assets / "image-set.json").exists())
         self.assertFalse(self.subjects.exists())
+
+    def test_corrupt_or_missing_composition_tar_refuses_publication(self):
+        path = self.assets / "rootless-microvm-rootfs-aarch64.tar.gz"
+        original = path.read_bytes()
+        for payload in (b"not a tar", b"", composition_tar(b"2\n"), composition_tar(worker_uid=0)):
+            with self.subTest(payload=payload):
+                path.write_bytes(payload)
+                result = self.run_assembler()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(path.name, result.stderr)
+                self.assertFalse((self.assets / "image-set.json").exists())
+                self.assertFalse(self.subjects.exists())
+        path.unlink()
+        result = self.run_assembler()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(path.name, result.stderr)
+        path.write_bytes(original)
 
     def test_provenance_subjects_derive_only_from_members_and_root(self):
         result = self.run_assembler()

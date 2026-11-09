@@ -2,8 +2,9 @@
 # from the authenticated CLI boot payload, never from this filesystem.
 { pkgs }:
 { name, packages ? [ ], extraFiles ? { }, builderUid ? null,
-  sealed ? true }:
+  sealed ? true, composition ? false }:
 assert builderUid == null || builderUid == 902;
+assert !composition || (sealed && builderUid == null);
 let
   inherit (pkgs) lib;
   busybox = pkgs.pkgsStatic.busybox;
@@ -21,8 +22,10 @@ let
     '') extraFiles);
 in
 pkgs.runCommand "${name}-rootfs" {
+  outputs = [ "out" ] ++ lib.optional composition "composition";
   nativeBuildInputs = [
     pkgs.e2fsprogs pkgs.coreutils pkgs.findutils pkgs.fakeroot pkgs.libfaketime
+    pkgs.gnutar pkgs.gzip
   ];
   passthru = {
     rootfsClosureInfo = closure;
@@ -114,6 +117,13 @@ pkgs.runCommand "${name}-rootfs" {
       -U 00000000-0000-0000-0000-000000000001 \
       -E lazy_itable_init=0,lazy_journal_init=0,hash_seed=00000000-0000-0000-0000-000000000002 \
       "$out"
+    ${lib.optionalString composition ''
+    # Capture the same fakeroot ownership as mkfs, including UID/GID 901.
+    # Never derive a lossy tar later by extracting the ext4 on a host filesystem.
+    tar --sort=name --format=gnu --numeric-owner --mtime=@1 \
+      -C root -cf "$TMPDIR/base.tar" .
+    gzip -n -9 -c "$TMPDIR/base.tar" > "$composition"
+    ''}
   IMAGE
   fsck.ext4 -n -f "$out"
 ''

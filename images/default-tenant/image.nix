@@ -2,7 +2,7 @@
   description = "Generic default tenant Linux base — dev and verity-sealed variants";
 
   # `default` emits
-  # {vmlinux, rootfs.ext4, rootfs.verity, rootfs.roothash,
+  # {vmlinux, rootfs.ext4, rootfs.tar.gz, rootfs.verity, rootfs.roothash,
   # rootfs-closure-paths, mvm-meta.json} with a valid 64-hex verity roothash and a
   # `sealed:true, accessible:false,
   # overlayAware:true, rootlessEntrypoint:true` sidecar; `dev` emits
@@ -97,6 +97,7 @@
           rootfsPkg = (import ../mk-rootfs.nix { inherit pkgs; }) {
             name = imageName;
             inherit sealed;
+            composition = sealed;
             # Only static busybox is needed in the default Linux base.
             packages = [ ];
           };
@@ -163,6 +164,7 @@
             }
 
             cp ${rootfsPkg} $out/rootfs.ext4
+            ${nixpkgs.lib.optionalString sealed "cp ${rootfsPkg.composition} $out/rootfs.tar.gz"}
 
             # Preserve the exact registered runtime closure as a release
             # provenance artifact. The footprint ledger validates every line
@@ -180,6 +182,7 @@
               $out/rootfs.ext4 \
               $out/rootfs-closure-paths \
               $out/mvm-meta.json
+            ${nixpkgs.lib.optionalString sealed "chmod 0644 $out/rootfs.tar.gz"}
           ''
           + nixpkgs.lib.optionalString sealed ''
 

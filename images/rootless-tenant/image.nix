@@ -2,7 +2,7 @@
   description = "mvm generic rootless tenant image — sealed, NIC-less OCI capability floor";
 
   # `default`/`prod` emits
-  # {vmlinux, rootfs.ext4, rootfs.verity, rootfs.roothash,
+  # {vmlinux, rootfs.ext4, rootfs.tar.gz, rootfs.verity, rootfs.roothash,
   # rootfs-closure-paths, mvm-meta.json} with a valid 64-hex verity roothash and a
   # `sealed:true, accessible:false,
   # overlayAware:true, rootlessEntrypoint:true` sidecar; `dev` emits
@@ -156,6 +156,7 @@
           rootfsPkg = (import ../mk-rootfs.nix { inherit pkgs; }) {
             name = imageName;
             inherit sealed;
+            composition = sealed && !smoke;
             # Generic OCI tooling; the CLI supplies the guest runtime.
             packages = [
               pkgs.crun
@@ -243,6 +244,7 @@
             }
 
             cp ${rootfsPkg} $out/rootfs.ext4
+            ${nixpkgs.lib.optionalString (sealed && !smoke) "cp ${rootfsPkg.composition} $out/rootfs.tar.gz"}
 
             # Preserve the exact registered runtime closure as a release
             # provenance artifact. The footprint ledger validates every line
@@ -261,6 +263,7 @@
               $out/rootfs.ext4 \
               $out/rootfs-closure-paths \
               $out/mvm-meta.json
+            ${nixpkgs.lib.optionalString (sealed && !smoke) "chmod 0644 $out/rootfs.tar.gz"}
           ''
           + nixpkgs.lib.optionalString sealed ''
 
