@@ -156,6 +156,7 @@
           rootfsPkg = (import ../mk-rootfs.nix { inherit pkgs; }) {
             name = imageName;
             inherit sealed;
+            compositionTar = sealed;
             # Generic OCI tooling; the CLI supplies the guest runtime.
             packages = [
               pkgs.crun
@@ -243,6 +244,9 @@
             }
 
             cp ${rootfsPkg} $out/rootfs.ext4
+            ${nixpkgs.lib.optionalString sealed ''
+              cp ${rootfsPkg.composition}/rootfs.tar.gz $out/rootfs.tar.gz
+            ''}
 
             # Preserve the exact registered runtime closure as a release
             # provenance artifact. The footprint ledger validates every line

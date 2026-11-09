@@ -62,7 +62,11 @@ for attr in "${attrs[@]}"; do
 
   # Rebuilding the wrapper alone would copy its cached root filesystem and
   # never exercise composition. Reproduce that derivation before the wrapper.
-  "${nix_cmd[@]}" build "${impure[@]}" --no-link --rebuild -L "${ref}.rootfs"
+  rootfs_outputs=("${ref}.rootfs")
+  if [[ "$attr" == default && "$role" != builder-vm ]]; then
+    rootfs_outputs+=("${ref}.rootfs.composition")
+  fi
+  "${nix_cmd[@]}" build "${impure[@]}" --no-link --rebuild -L "${rootfs_outputs[@]}"
   # --rebuild compares new bytes with the registered output.
   "${nix_cmd[@]}" build "${impure[@]}" --no-link --rebuild -L "$ref"
   echo "rebuild: bit-identical"
@@ -71,7 +75,7 @@ for attr in "${attrs[@]}"; do
   stage="$out/stage/${role}-${attr}-${arch}"
   mkdir -p "$stage"
   for file in \
-    vmlinux kernel.img rootfs.ext4 rootfs.verity rootfs.roothash \
+    vmlinux kernel.img rootfs.ext4 rootfs.verity rootfs.roothash rootfs.tar.gz \
     mvm-meta.json cmdline.txt manifest.json
   do
     if [ -e "$first/$file" ]; then

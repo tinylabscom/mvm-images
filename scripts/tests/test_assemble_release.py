@@ -1,7 +1,10 @@
 import importlib.util
+import gzip
+import io
 import json
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,6 +47,21 @@ class ContractTests(unittest.TestCase):
 
 
 class AssembleReleaseTests(unittest.TestCase):
+    @staticmethod
+    def composition_source(marker=b"1\n", worker_uid=901):
+        body = io.BytesIO()
+        with tarfile.open(fileobj=body, mode="w") as archive:
+            contract = tarfile.TarInfo("./etc/mvm/base-image-contract")
+            contract.size = len(marker)
+            contract.mode = 0o444
+            archive.addfile(contract, io.BytesIO(marker))
+            worker = tarfile.TarInfo("./home/mvm-worker")
+            worker.type = tarfile.DIRTYPE
+            worker.mode = 0o755
+            worker.uid = worker.gid = worker_uid
+            archive.addfile(worker)
+        return gzip.compress(body.getvalue(), mtime=0)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -60,7 +78,12 @@ class AssembleReleaseTests(unittest.TestCase):
                         isinstance(member.role, dict)
                         and "workload_rootfs" in member.role
                         and artifact.format == "ext4"
-                    ) else artifact.name.encode()
+                    ) else (
+                        self.composition_source()
+                        if artifact.format == "tar_gz" and isinstance(member.role, dict)
+                        and "workload_rootfs" in member.role
+                        else artifact.name.encode()
+                    )
                     (self.assets / artifact.name).write_bytes(data)
         for arch in ASSEMBLER.ARCHES:
             (self.assets / f"vmlinux-{arch}-builder").write_bytes(arch.encode())
@@ -107,6 +130,15 @@ class AssembleReleaseTests(unittest.TestCase):
             for profile in ("default_tenant", "rootless_tenant"):
                 self.assertIn({"workload_kernel": profile}, roles)
                 self.assertIn({"workload_rootfs": profile}, roles)
+                root = next(
+                    member for member in required
+                    if member["target"] == {"arch": arch}
+                    and member["role"] == {"workload_rootfs": profile}
+                )
+                self.assertEqual(
+                    [artifact["format"] for artifact in root["artifacts"]],
+                    ["ext4", "verity_hash_tree", "verity_root_hash", "tar_gz"],
+                )
             self.assertEqual(
                 (self.assets / f"stage0-vmlinux-{arch}").read_bytes(),
                 (self.assets / f"vmlinux-{arch}-builder").read_bytes(),
@@ -122,6 +154,23 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertIn(missing.name, result.stderr)
         self.assertFalse((self.assets / "image-set.json").exists())
         self.assertFalse(self.subjects.exists())
+
+    def test_missing_composition_source_refuses_candidate(self):
+        missing = self.assets / "default-microvm-rootfs-aarch64.tar.gz"
+        missing.unlink()
+        result = self.run_assembler()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(missing.name, result.stderr)
+        self.assertFalse((self.assets / "image-set.json").exists())
+
+    def test_composition_source_requires_same_contract_and_worker_identity(self):
+        source = self.assets / "default-microvm-rootfs-x86_64.tar.gz"
+        for invalid in (self.composition_source(b"2\n"), self.composition_source(worker_uid=902)):
+            source.write_bytes(invalid)
+            result = self.run_assembler()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("composition source", result.stderr)
+            self.assertFalse((self.assets / "image-set.json").exists())
 
     def test_provenance_subjects_derive_only_from_members_and_root(self):
         result = self.run_assembler()

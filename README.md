@@ -46,6 +46,14 @@ emitted from `images/base-image-contract.nix`. Fixed identities are root 0,
 Builder additionally provides UID 902 and boot ABI 2; its host tools arrive
 in the CLI boot payload.
 
+Production default/rootless rootfs members also carry a deterministic
+`rootfs.tar.gz` composition source from the same fakeroot-owned staging tree
+as `rootfs.ext4`. It is a signed, digest-pinned build input, not a boot disk
+or a replacement for the verity-sealed base. The normal image fetch ignores
+this extra artifact; a composable package build requests it explicitly.
+Existing signed sets remain unchanged. Both architectures must reproduce
+this source archive before a future Linux-only set can be published.
+
 No guest NIC, TAP, TUN, bridge, veth, macvlan, SLIRP, passt, vpnkit, CNI
 dataplane, raw-packet tunnel, guest NAT or firewall fallback is permitted.
 Loopback is only for local adapters. Proxy-aware TCP/UDP, controlled DNS,
