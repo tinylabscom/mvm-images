@@ -123,9 +123,13 @@ that set. Supplying a locally built base must not cause the client to use
 a different, signed-default kernel or to call a host receipt a publisher
 signature.
 
-The sealed production bases also emit `rootfs.tar.gz` as a composition
-source. Dev variants do **not** emit that tar. An ext4-only local manifest
-cannot stand in for a composition tar or a boot witness, and no
+The sealed default/rootless outputs also emit `rootfs.tar.gz` as a
+composition source. A local manifest made from those locally built
+outputs is **still local-dev evidence**, even if the source output used
+the sealed `default` Nix variant; its unsigned manifest is never
+publisher evidence. The unsealed `dev` variants do **not** emit the
+tar. An ext4-only local manifest cannot stand in for a composition
+tar or a boot witness, and no
 `mvmctl run --compose --base` custom-base workflow is demonstrated by
 this repository today. The client must add a separate, explicitly local
 composition input and verify that its measured output actually boots
