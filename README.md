@@ -111,6 +111,30 @@ Use `just manifest --help` for artifact arguments. Local manifests take
 `images` identity at `local-dev` tier. A moved checkout invalidates that
 identity. Local manifests are not signed release evidence.
 
+### A user-built base is a development input
+
+`just build default-tenant dev x86_64-linux` (or `aarch64-linux`) and
+`just manifest --help` are the existing path for recording a caller-supplied
+kernel and ext4 root as a **local-dev** set. The local emitter measures the
+artifacts and verifies the base-image contract marker; it never signs them
+or makes them eligible for production. The paired `mvm` consumer must
+independently verify its selected kernel, filesystem and ABI before using
+that set. Supplying a locally built base must not cause the client to use
+a different, signed-default kernel or to call a host receipt a publisher
+signature.
+
+The sealed production bases also emit `rootfs.tar.gz` as a composition
+source. Dev variants do **not** emit that tar. An ext4-only local manifest
+cannot stand in for a composition tar or a boot witness, and no
+`mvmctl run --compose --base` custom-base workflow is demonstrated by
+this repository today. The client must add a separate, explicitly local
+composition input and verify that its measured output actually boots
+with the selected custom kernel; it must fail closed if the required
+input is absent. Production still requires independently trusted signed
+base and full-runtime evidence, a released compatible consumer and
+protected signing/publication. No image-set release or `images.lock`
+advance is implied by local development.
+
 Dirty checkout identities carry `fingerprint_version: 2` and hash canonical
 HEAD/index/worktree records through in-process repository APIs, not Git
 status/diff text. Clean records remain `{"state":"clean"}`. The paired strict
