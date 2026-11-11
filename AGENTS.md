@@ -14,6 +14,37 @@ Base images contain no mvm binaries or mvm-authored /init. Do not add runtime
 roles. This repository is never part of mvm's merge queue; image events
 follow Linux package/kernel/toolchain changes.
 
+## Image design boundary
+
+Produce deterministic, minimal Linux boot inputs, not application packs,
+the MVM guest runtime, a fleet controller, or a substitute security policy.
+Keep a single declared source of truth for each image role and input. Build
+for matching architecture and generic capability profiles; do not select
+an image by product, workload name, or host OS. A signed target-specific
+artifact may be reused by digest, but cache reuse does not renew trust or
+authorize a launch. Never describe a candidate, attestation, or host-only
+check as a reproduced, signed, installed-boot witness.
+
+- Measure source-to-artifact time, first-use preparation, byte size, guest
+  memory, and cold/warm boot separately on named hardware. Optimize rebuild
+  and distribution without widening the base, skipping verification, or
+  moving required runtime admission out of its measured launch boundary.
+  Keep the default tenant smaller than the rootless capability profile.
+- Preserve the NIC-less guest and authenticated vsock network boundary on
+  every supported VMM. No SSH, application credentials, host mounts, or
+  unapproved binaries in a generic base. Optional hardware capabilities
+  must remain optional unless an admitted policy explicitly requires them.
+- Publish both architectures as one immutable, reproducible set with exact
+  member digests and fresh revocation evidence. Do not advance a consumer
+  lock, publish a new set, or claim platform compatibility before the real
+  consumer and boot witnesses required below exist. The future of
+  target-specific `.mvmpkg` selection belongs to the pack consumer and
+  registry; this repository provides only the matching Linux layer.
+- Do not name competitors in new prose, filenames or PR text, or attribute
+  work to an assistant. Count handwritten non-test production source for
+  this repository's preferred one-million-line ceiling, excluding generated
+  and vendored code; preserve tests and necessary security boundaries.
+
 ## Base and publication contracts
 
 Maintain separate generic default-tenant/rootless-tenant profiles on x86_64
