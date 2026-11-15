@@ -225,7 +225,12 @@ class ContractTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(contract.boot.E2EError, "CID|mismatch"):
                         contract.acknowledge_guest(listener, nonce, time.monotonic() + 1)
-                    self.assertEqual(b"", guest.recv(68))
+                    try:
+                        reply = guest.recv(68)
+                    except ConnectionResetError:
+                        pass
+                    else:
+                        self.assertEqual(b"", reply)
 
     def test_native_exchange_unavailable_refuses(self):
         listener = unittest.mock.Mock()
