@@ -9,12 +9,16 @@ or writes evidence.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import gzip
 import importlib.util
 import json
 from pathlib import Path
 import re
+import secrets
+import socket
 import sys
+import time
 
 import e2e_boot as boot
 
@@ -28,6 +32,63 @@ sys.modules[SPEC.name] = inventory
 SPEC.loader.exec_module(inventory)
 READY = "MVM-IMAGES-BASE-CONTRACT-READY"
 REFUSED = "MVM-IMAGES-BASE-CONTRACT-REFUSED"
+VSOCK_PORT = 40501
+GUEST_CID = 7
+
+
+def acknowledge_guest(listener: socket.socket, nonce: str, deadline: float) -> None:
+    """Accept one native guest connection; no serial output can substitute for it."""
+    def remaining() -> float:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise boot.E2EError("guest vsock exchange timed out")
+        return left
+
+    listener.settimeout(remaining())
+    try:
+        connection, address = listener.accept()
+    except OSError as exc:
+        raise boot.E2EError(f"guest vsock connection unavailable: {exc}") from exc
+    with connection:
+        if address[0] != GUEST_CID:
+            raise boot.E2EError(f"unexpected guest vsock CID: {address[0]}")
+        received = bytearray()
+        try:
+            while len(received) < 64:
+                connection.settimeout(remaining())
+                chunk = connection.recv(64 - len(received))
+                if not chunk:
+                    break
+                received.extend(chunk)
+            if bytes(received) != nonce.encode("ascii"):
+                raise boot.E2EError("guest vsock nonce mismatch")
+            connection.settimeout(remaining())
+            connection.sendall(b"ACK:" + bytes(received))
+        except OSError as exc:
+            raise boot.E2EError(f"guest vsock exchange failed: {exc}") from exc
+
+
+def run_verified_boot(command: list[str], timeout: float) -> None:
+    if not hasattr(socket, "AF_VSOCK"):
+        raise boot.E2EError("native AF_VSOCK listener unavailable")
+    deadline = time.monotonic() + timeout
+    try:
+        with socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM) as listener:
+            listener.bind((socket.VMADDR_CID_ANY, VSOCK_PORT))
+            listener.listen(1)
+            nonce = secrets.token_hex(32)
+            command = command.copy()
+            command[command.index("-append") + 1] += f" mvm_images_nonce={nonce}"
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                exchange = pool.submit(acknowledge_guest, listener, nonce, deadline)
+                try:
+                    boot.run_until_ready(command, timeout, READY, exact_marker=True,
+                                         refusal_marker=REFUSED)
+                    exchange.result()
+                finally:
+                    listener.close()
+    except OSError as exc:
+        raise boot.E2EError(f"native AF_VSOCK listener unavailable: {exc}") from exc
 
 
 def describe(path: Path) -> dict:
@@ -186,7 +247,7 @@ def execute(args: argparse.Namespace) -> dict:
             binary=f"qemu-system-{arch}", arch=arch,
             kernel=artifact_path(args.artifacts, kernel_record),
             rootfs=artifact_path(args.artifacts, root_record),
-            guest_cid=7, accel=args.accel, rootfs_type="ext4",
+            guest_cid=GUEST_CID, accel=args.accel, rootfs_type="ext4",
             init="/mvm-images-contract-probe", initrd=probes[arch],
             read_only=True, require_vsock=True,
         )
@@ -201,8 +262,7 @@ def execute(args: argparse.Namespace) -> dict:
         raise boot.E2EError("actual boots require --witness")
     for plan in plans:
         boot._require_binary(plan["vmm_plan"][0])
-        boot.run_until_ready(plan["vmm_plan"], args.timeout, READY,
-                             exact_marker=True, refusal_marker=REFUSED)
+        run_verified_boot(plan["vmm_plan"], args.timeout)
     # Bind success to the same input bytes observed before boot, not just to
     # their names. QEMU's read-only drive protects against guest writes; these
     # checks also refuse concurrent host-side changes before evidence is saved.
