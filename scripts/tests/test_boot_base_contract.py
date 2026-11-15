@@ -1,13 +1,16 @@
 import argparse
+from contextlib import ExitStack
 import copy
 import gzip
 import importlib.util
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -63,7 +66,7 @@ class ContractTests(unittest.TestCase):
         }))
 
     def test_candidate_witness_binds_all_six_actual_pairs_and_probes(self):
-        with patch.object(contract.boot, "_require_binary"), patch.object(contract.boot, "run_until_ready") as run:
+        with patch.object(contract.boot, "_require_binary"), patch.object(contract, "run_verified_boot") as run:
             evidence = contract.execute(self.args)
         self.assertEqual(6, run.call_count)
         self.assertTrue(evidence["evidence"])
@@ -74,13 +77,12 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(64, len(boot["probe"]["sha256"]))
             self.assertEqual(64, len(boot["kernel"]["sha256"]))
             self.assertEqual(64, len(boot["rootfs"]["sha256"]))
-        run.assert_called_with(evidence["boots"][-1]["vmm_plan"], 2, contract.READY,
-                               exact_marker=True, refusal_marker=contract.REFUSED)
+        run.assert_called_with(evidence["boots"][-1]["vmm_plan"], 2)
 
     def test_failed_boot_never_writes_success(self):
         self.args.witness.write_text("stale")
         with patch.object(contract.boot, "_require_binary"), patch.object(
-            contract.boot, "run_until_ready", side_effect=contract.boot.E2EError("refused")
+            contract, "run_verified_boot", side_effect=contract.boot.E2EError("refused")
         ):
             with self.assertRaises(contract.boot.E2EError):
                 contract.execute(self.args)
@@ -88,7 +90,7 @@ class ContractTests(unittest.TestCase):
 
     def test_plan_is_not_evidence_and_does_not_boot_or_write(self):
         self.args.plan = True
-        with patch.object(contract.boot, "run_until_ready") as run:
+        with patch.object(contract, "run_verified_boot") as run:
             result = contract.execute(self.args)
         run.assert_not_called()
         self.assertFalse(result["evidence"])
@@ -98,7 +100,7 @@ class ContractTests(unittest.TestCase):
         self.args.manifest = None
         self.args.arch = "aarch64"
         self.args.expected_contract = 1
-        with patch.object(contract.boot, "_require_binary"), patch.object(contract.boot, "run_until_ready"):
+        with patch.object(contract.boot, "_require_binary"), patch.object(contract, "run_verified_boot"):
             result = contract.execute(self.args)
         self.assertEqual("build-diagnostic", result["scope"])
         self.assertEqual(3, len(result["boots"]))
@@ -121,7 +123,7 @@ class ContractTests(unittest.TestCase):
                 changed["compatibility"][key] = value
             self.manifest.write_text(json.dumps(changed))
             with self.subTest(key=key, value=value), \
-                 patch.object(contract.boot, "run_until_ready") as run:
+                 patch.object(contract, "run_verified_boot") as run:
                 with self.assertRaisesRegex(contract.boot.E2EError, "schema 3"):
                     contract.execute(self.args)
                 run.assert_not_called()
@@ -130,7 +132,7 @@ class ContractTests(unittest.TestCase):
     def test_hash_tamper_refused_before_any_boot(self):
         name = self.members[0]["artifacts"][0]["name"]
         (self.directory / name).write_bytes(b"tampered")
-        with patch.object(contract.boot, "run_until_ready") as run:
+        with patch.object(contract, "run_verified_boot") as run:
             with self.assertRaisesRegex(contract.boot.E2EError, "digest/size"):
                 contract.execute(self.args)
         run.assert_not_called()
@@ -149,7 +151,7 @@ class ContractTests(unittest.TestCase):
                 path.write_bytes(original + b"concurrent host mutation")
             with self.subTest(path=path.name), \
                  patch.object(contract.boot, "_require_binary"), \
-                 patch.object(contract.boot, "run_until_ready", side_effect=mutate):
+                 patch.object(contract, "run_verified_boot", side_effect=mutate):
                 with self.assertRaises(contract.boot.E2EError):
                     contract.execute(self.args)
             self.assertFalse(self.args.witness.exists())
@@ -201,6 +203,90 @@ class ContractTests(unittest.TestCase):
             with self.assertRaisesRegex(contract.boot.E2EError, "requires usable"):
                 contract.execute(self.args)
 
+    def test_native_exchange_requires_matching_guest_cid_and_nonce(self):
+        nonce = "a" * 64
+        for cid, payload, accepted in (
+            (contract.GUEST_CID, nonce.encode(), True),
+            (contract.GUEST_CID, b"b" * 64, False),
+            (contract.GUEST_CID + 1, nonce.encode(), False),
+            (contract.GUEST_CID, b"", False),
+        ):
+            with self.subTest(cid=cid, payload=payload), ExitStack() as stack:
+                guest, host = socket.socketpair()
+                stack.enter_context(guest)
+                stack.enter_context(host)
+                listener = unittest.mock.Mock()
+                listener.accept.return_value = (host, (cid, contract.VSOCK_PORT))
+                guest.sendall(payload)
+                guest.shutdown(socket.SHUT_WR)
+                if accepted:
+                    contract.acknowledge_guest(listener, nonce, time.monotonic() + 1)
+                    self.assertEqual(b"ACK:" + payload, guest.recv(68))
+                else:
+                    with self.assertRaisesRegex(contract.boot.E2EError, "CID|mismatch"):
+                        contract.acknowledge_guest(listener, nonce, time.monotonic() + 1)
+                    try:
+                        reply = guest.recv(68)
+                    except ConnectionResetError:
+                        pass
+                    else:
+                        self.assertEqual(b"", reply)
+
+    def test_native_exchange_unavailable_refuses(self):
+        listener = unittest.mock.Mock()
+        listener.accept.side_effect = socket.timeout("unavailable")
+        with self.assertRaisesRegex(contract.boot.E2EError, "unavailable"):
+            contract.acknowledge_guest(listener, "a" * 64, time.monotonic() + 1)
+
+    def test_partial_guest_input_cannot_renew_the_exchange_deadline(self):
+        listener = unittest.mock.Mock()
+        connection = unittest.mock.MagicMock()
+        connection.recv.return_value = b"a"
+        listener.accept.return_value = (connection, (contract.GUEST_CID, 0))
+        with patch.object(contract.time, "monotonic", side_effect=(10, 10.5, 11.1)):
+            with self.assertRaisesRegex(contract.boot.E2EError, "timed out"):
+                contract.acknowledge_guest(listener, "a" * 64, 11)
+        connection.recv.assert_called_once_with(64)
+        connection.sendall.assert_not_called()
+
+    def test_verified_boot_refuses_unavailable_host_socket(self):
+        with patch.object(contract.socket, "socket", side_effect=OSError("no vsock")):
+            with self.assertRaisesRegex(contract.boot.E2EError, "native AF_VSOCK listener unavailable"):
+                contract.run_verified_boot(["qemu", "-append", "init=/probe"], 1)
+
+    def test_verified_boot_requires_exchange_even_if_serial_says_ready(self):
+        listener = unittest.mock.MagicMock()
+        listener.__enter__.return_value = listener
+        listener.accept.side_effect = socket.timeout("no guest")
+        with patch.object(contract.socket, "AF_VSOCK", 40, create=True), \
+             patch.object(contract.socket, "VMADDR_CID_ANY", 0xffffffff, create=True), \
+             patch.object(contract.socket, "socket", return_value=listener), \
+             patch.object(contract.secrets, "token_hex", return_value="a" * 64), \
+             patch.object(contract.boot, "run_until_ready") as run:
+            with self.assertRaisesRegex(contract.boot.E2EError, "guest vsock connection unavailable"):
+                contract.run_verified_boot(["qemu", "-append", "init=/probe"], 0.01)
+        self.assertIn("mvm_images_nonce=" + "a" * 64, run.call_args.args[0][2])
+        self.assertNotIn("mvm_images_nonce", "init=/probe")
+
+    def test_verified_boot_acknowledges_this_boot_nonce_before_success(self):
+        with ExitStack() as stack:
+            guest, host = socket.socketpair()
+            stack.enter_context(guest)
+            stack.enter_context(host)
+            listener = unittest.mock.MagicMock()
+            listener.__enter__.return_value = listener
+            listener.accept.return_value = (host, (contract.GUEST_CID, 0))
+            def guest_ready(command, timeout, marker, **kwargs):
+                nonce = command[command.index("-append") + 1].split("mvm_images_nonce=")[1]
+                self.assertEqual(64, len(nonce))
+                guest.sendall(nonce.encode())
+                self.assertEqual(b"ACK:" + nonce.encode(), guest.recv(68))
+            with patch.object(contract.socket, "AF_VSOCK", 40, create=True), \
+                 patch.object(contract.socket, "VMADDR_CID_ANY", 0xffffffff, create=True), \
+                 patch.object(contract.socket, "socket", return_value=listener), \
+                 patch.object(contract.boot, "run_until_ready", side_effect=guest_ready):
+                contract.run_verified_boot(["qemu", "-append", "init=/probe"], 1)
+
     def test_probe_and_script_ownership_and_exact_marker_source(self):
         source = (ROOT / "images/base-contract-probe.nix").read_text()
         for token in ("pkgs.pkgsStatic.busybox", "mount -t ext4 -o ro,noload",
@@ -212,6 +298,8 @@ class ContractTests(unittest.TestCase):
                       'cmp -s /expected-contract "$marker"', contract.READY, contract.REFUSED):
             self.assertIn(token, source)
         self.assertLess(source.index("cmp -s"), source.index("echo " + contract.READY))
+        self.assertLess(source.index("base-contract-vsock-exchange \"$nonce\" || refuse"),
+                        source.index("echo " + contract.READY))
         self.assertNotIn("tree/init", source)
         self.assertNotIn("mvmctl", source)
         self.assertNotIn("runtime-overlay", source)
@@ -221,7 +309,7 @@ class ContractTests(unittest.TestCase):
         # Only filesystem paths and host stat syntax are adapted; no mount/VM involved.
         source = (ROOT / "images/base-contract-probe.nix").read_text()
         validation = source.split("marker=/workload/etc/mvm/base-image-contract\n", 1)[1]
-        validation = validation.split("echo " + contract.READY, 1)[0]
+        validation = validation.split("nonce=\n", 1)[0]
         validation = validation.replace("/expected-contract", '"$2"')
         script = """
 refuse() { exit 42; }
