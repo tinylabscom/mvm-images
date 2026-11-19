@@ -19,9 +19,9 @@ jobs:
         run: |
           set -euo pipefail
           # Install the pinned Rust toolchain and compile `just`.
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.100.0
           source "$HOME/.cargo/env"
-          cargo install --locked just
+          cargo +1.100.0 install --locked just
       - name: Build image derivations (fast subset)
         run: |
           set -euo pipefail

@@ -18,6 +18,13 @@ class BuildWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.build = (ROOT / ".github/workflows/build.yml").read_text()
 
+    def test_ci_command_runner_uses_the_selected_rust_compiler(self):
+        workflow = (ROOT / ".github/workflows/image-owned-ci.yml").read_text()
+        install = workflow.split("- name: Install just (command runner)\n")[1].split("- name:")[0]
+        self.assertIn("--default-toolchain 1.100.0", install)
+        self.assertIn("cargo +1.100.0 install --locked just", install)
+        self.assertNotIn("cargo install --locked just", install)
+
     def test_every_member_artifact_is_uploaded_by_the_build(self):
         # Use the producer table, not an independent publication-role list.
         uploaded = self.build.replace("${{ matrix.arch }}", "ARCH")
